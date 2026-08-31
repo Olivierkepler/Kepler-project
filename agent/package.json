@@ -1,0 +1,40 @@
+{
+  "name": "buildsigma-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BUILDSIGMA private Field Variance agent service",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test:a3": "tsx src/scripts/phaseAgentA3Test.ts",
+    "test:a4": "tsx src/scripts/phaseAgentA4Test.ts",
+    "test:a5": "tsx src/scripts/phaseAgentA5Test.ts",
+    "test:a6": "tsx src/scripts/phaseAgentA6Test.ts",
+    "test:a7": "tsx src/scripts/phaseAgentA7Test.ts",
+    "test:logging": "tsx src/scripts/agentExecutionLoggingTest.ts",
+    "test:adk-model-run": "tsx src/scripts/adkModelRunTest.ts",
+    "test:assessment": "tsx src/scripts/fieldVarianceAssessmentTest.ts",
+    "test:evidence-analysis": "tsx src/scripts/evidenceAnalysisTest.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@google/adk": "^2.0.0",
+    "express": "^5.2.1",
+    "firebase-admin": "^14.3.0",
+    "google-auth-library": "^10.1.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/connect": "^3.4.38",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.2.0",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  }
+}
