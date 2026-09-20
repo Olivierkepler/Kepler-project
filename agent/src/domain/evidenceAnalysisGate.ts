@@ -42,7 +42,8 @@ export function gateAssessmentWithEvidenceAnalysis(
 
   if (needsMore) {
     if (action === "request_evidence" || action === "escalate") {
-      // Allowed as recommendation; A4 waiting write only when presence is false.
+      // Allowed: presence ≠ post-analysis decision. Cycle reopens waiting when
+      // request_evidence is recommended even if Evidence already exists.
       return { ok: true, action };
     }
     if (action === "prepare_summary") {

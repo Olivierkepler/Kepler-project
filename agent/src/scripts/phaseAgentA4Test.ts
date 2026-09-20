@@ -32,8 +32,8 @@ import {
 } from "../services/startAgentRun.js";
 import { computeDirectDeltaEvidencePolicy } from "../tools/toolContext.js";
 import {
-  applyAgentRunAttemptIncrement,
   applyAgentRunStateUpdate,
+  applyClaimQueuedAgentRunStart,
   applyRequestDeltaEvidence,
 } from "../validation/agentRun.js";
 
@@ -260,14 +260,16 @@ function createDeps(
       store.runs.set(id, next);
       return next;
     },
-    incrementAgentRunAttemptFn: async (id) => {
+    claimQueuedAgentRunStartFn: async (id) => {
       const current = store.runs.get(id);
       if (!current) {
         throw new AgentRunError("not_found", "AgentRun not found");
       }
-      const next = applyAgentRunAttemptIncrement(current);
-      store.runs.set(id, next);
-      return next;
+      const claimed = applyClaimQueuedAgentRunStart(current);
+      if (claimed.outcome !== "not_queued") {
+        store.runs.set(id, claimed.agentRun);
+      }
+      return claimed;
     },
     requestDeltaEvidenceFn: async (id, input) => {
       const current = store.runs.get(id);

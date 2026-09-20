@@ -48,8 +48,8 @@ import {
   type TrustedToolContext,
 } from "../tools/toolContext.js";
 import {
-  applyAgentRunAttemptIncrement,
   applyAgentRunStateUpdate,
+  applyClaimQueuedAgentRunStart,
 } from "../validation/agentRun.js";
 
 let passed = 0;
@@ -271,14 +271,16 @@ function createDeps(store: MemStore): StartAgentRunDeps {
       store.runs.set(id, next);
       return next;
     },
-    incrementAgentRunAttemptFn: async (id) => {
+    claimQueuedAgentRunStartFn: async (id) => {
       const current = store.runs.get(id);
       if (!current) {
         throw new AgentRunError("not_found", "AgentRun not found");
       }
-      const next = applyAgentRunAttemptIncrement(current);
-      store.runs.set(id, next);
-      return next;
+      const claimed = applyClaimQueuedAgentRunStart(current);
+      if (claimed.outcome !== "not_queued") {
+        store.runs.set(id, claimed.agentRun);
+      }
+      return claimed;
     },
     runAgent: createStubFieldVarianceAgentRunner(makeAssessment()),
     model: "gemini-3.5-flash",

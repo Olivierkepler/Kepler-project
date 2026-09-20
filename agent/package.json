@@ -16,9 +16,12 @@
     "test:a6": "tsx src/scripts/phaseAgentA6Test.ts",
     "test:a7": "tsx src/scripts/phaseAgentA7Test.ts",
     "test:logging": "tsx src/scripts/agentExecutionLoggingTest.ts",
+    "test:transient-retry": "tsx src/scripts/transientProviderRetryTest.ts",
     "test:adk-model-run": "tsx src/scripts/adkModelRunTest.ts",
     "test:assessment": "tsx src/scripts/fieldVarianceAssessmentTest.ts",
-    "test:evidence-analysis": "tsx src/scripts/evidenceAnalysisTest.ts"
+    "test:evidence-analysis": "tsx src/scripts/evidenceAnalysisTest.ts",
+    "test:fe3-recoverable-evidence": "tsx src/scripts/phase2FE3RecoverableEvidenceTest.ts",
+    "test:fe6-request-evidence": "tsx src/scripts/phase2FE6RequestEvidenceTest.ts"
   },
   "engines": {
     "node": ">=20"

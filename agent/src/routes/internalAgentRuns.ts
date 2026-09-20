@@ -108,14 +108,30 @@ export function createInternalAgentRunsRouter(
         return;
       }
 
+      if (result.kind === "transient_retry") {
+        res.status(503).json({
+          status: "transient_retry",
+          errorCategory: result.errorCategory,
+          message: result.message,
+          agentRunId: result.agentRun.id,
+          agentRunStatus: result.agentRun.status,
+          currentStep: result.agentRun.currentStep,
+          attemptCount: result.agentRun.attemptCount,
+        });
+        return;
+      }
+
       if (result.kind === "failed") {
         const status =
-          result.errorCategory === "agent_run_not_found" ? 404 : 500;
+          result.errorCategory === "agent_run_not_found" ? 404 : 200;
         res.status(status).json({
           status: "failed",
           errorCategory: result.errorCategory,
           message: result.message,
           agentRunId: result.agentRun?.id ?? pathId,
+          agentRunStatus: result.agentRun?.status ?? null,
+          currentStep: result.agentRun?.currentStep ?? null,
+          attemptCount: result.agentRun?.attemptCount ?? null,
         });
         return;
       }
@@ -242,14 +258,31 @@ export function createInternalAgentRunsRouter(
         return;
       }
 
+      if (result.kind === "transient_retry") {
+        res.status(503).json({
+          status: "transient_retry",
+          errorCategory: result.errorCategory,
+          message: result.message,
+          agentRunId: result.agentRun.id,
+          agentRunStatus: result.agentRun.status,
+          currentStep: result.agentRun.currentStep,
+          attemptCount: result.agentRun.attemptCount,
+          evidenceId,
+        });
+        return;
+      }
+
       if (result.kind === "failed") {
         const status =
-          result.errorCategory === "agent_run_not_found" ? 404 : 500;
+          result.errorCategory === "agent_run_not_found" ? 404 : 200;
         res.status(status).json({
           status: "failed",
           errorCategory: result.errorCategory,
           message: result.message,
           agentRunId: result.agentRun?.id ?? pathId,
+          agentRunStatus: result.agentRun?.status ?? null,
+          currentStep: result.agentRun?.currentStep ?? null,
+          attemptCount: result.agentRun?.attemptCount ?? null,
           evidenceId,
         });
         return;

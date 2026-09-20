@@ -6,6 +6,11 @@ import type { EvidenceAnalysis } from "../domain/evidenceAnalysis.js";
 import { selectEvidenceForAnalysis } from "../domain/evidenceSelection.js";
 import type { Evidence } from "../domain/evidence.js";
 import {
+  detectPhotoMagicKind,
+  mimeMatchesPhotoMagic,
+} from "../domain/photoMagicBytes.js";
+import { classifyRecoverableEvidenceMediaFailure } from "../domain/recoverableEvidenceFailure.js";
+import {
   categorizeExecutionError,
   logAgentExecution,
 } from "../logging/agentExecutionLogging.js";
@@ -52,6 +57,20 @@ function structuredWithoutModel(args: {
   };
 }
 
+function unsupportedMediaAnalysis(evidence: Evidence): EvidenceAnalysis {
+  return structuredWithoutModel({
+    evidence,
+    relevance: "unsupported_media",
+    description:
+      "Evidence photo bytes could not be decoded or are not a supported image.",
+    needsAdditionalEvidence: true,
+    suggestedFollowUp:
+      "Upload a clear JPEG, PNG, or WEBP photo documenting the field difference.",
+    userVisibleRationale:
+      "The submitted photo could not be analyzed. Capture a clear replacement photo and try again.",
+  });
+}
+
 async function buildTrustedContextSummary(
   agentRun: AgentRun,
   loaders: DomainLoaders,
@@ -87,6 +106,9 @@ async function buildTrustedContextSummary(
  * Selects trusted direct Delta Evidence, loads photo bytes if needed,
  * and produces EvidenceAnalysis. Cap: ≤1 multimodal Gemini call per resume
  * (plus optional malformed-output repair inside the runner).
+ *
+ * Recoverable media failures return structured unsupported_media analysis
+ * instead of throwing — the Field Variance cycle then reopens waiting_for_evidence.
  */
 export async function analyzeEvidenceForAgentRun(
   agentRun: AgentRun,
@@ -187,7 +209,9 @@ export async function analyzeEvidenceForAgentRun(
         userVisibleRationale:
           loaded.error === "missing_object"
             ? "The linked photo could not be read from storage. Please re-upload documentation."
-            : "Additional documentation is needed before preparing a summary.",
+            : loaded.error === "unsupported_media"
+              ? "The submitted photo could not be analyzed. Capture a clear replacement photo and try again."
+              : "Additional documentation is needed before preparing a summary.",
       });
 
       logAgentExecution({
@@ -201,6 +225,24 @@ export async function analyzeEvidenceForAgentRun(
         durationMs: Date.now() - started,
       });
 
+      return { kind: "analyzed", analysis, multimodalCalls: 0 };
+    }
+
+    const magic = detectPhotoMagicKind(loaded.photo.bytes);
+    if (!magic || !mimeMatchesPhotoMagic(loaded.photo.mimeType, magic)) {
+      const analysis = unsupportedMediaAnalysis(selected);
+      logAgentExecution({
+        event: "agent_evidence_analysis_ready",
+        agentRunId: agentRun.id,
+        evidenceId: selected.id,
+        projectId: agentRun.projectId,
+        workflowType: agentRun.workflowType,
+        step: agentRun.currentStep,
+        errorCategory: "unsupported_media",
+        durationMs: Date.now() - started,
+        mimeType: loaded.photo.mimeType,
+        byteSize: loaded.photo.byteSize,
+      });
       return { kind: "analyzed", analysis, multimodalCalls: 0 };
     }
 
@@ -255,6 +297,22 @@ export async function analyzeEvidenceForAgentRun(
 
     return { kind: "analyzed", analysis, multimodalCalls };
   } catch (error) {
+    const recoverable = classifyRecoverableEvidenceMediaFailure(error);
+    if (recoverable) {
+      const analysis = unsupportedMediaAnalysis(selected);
+      logAgentExecution({
+        event: "agent_evidence_analysis_ready",
+        agentRunId: agentRun.id,
+        evidenceId: selected.id,
+        projectId: agentRun.projectId,
+        workflowType: agentRun.workflowType,
+        step: agentRun.currentStep,
+        errorCategory: recoverable.code,
+        durationMs: Date.now() - started,
+      });
+      return { kind: "analyzed", analysis, multimodalCalls };
+    }
+
     logAgentExecution({
       event: "agent_evidence_analysis_failed",
       agentRunId: agentRun.id,

@@ -9,14 +9,26 @@ import {
 import {
   applyAgentRunAttemptIncrement,
   applyAgentRunStateUpdate,
+  applyRecoverFailedFieldVarianceEvidence,
+  applyRecoverStickyRequestEvidence,
+  applyRequestAdditionalDeltaEvidence,
   applyRequestDeltaEvidence,
+  applyRequestReplacementDeltaEvidence,
   applyResumeFromDeltaEvidence,
+  applyClaimQueuedAgentRunStart,
   buildQueuedAgentRun,
   normalizeAgentRun,
+  type RecoverFailedFieldVarianceEvidenceInput,
+  type RecoverFailedFieldVarianceEvidenceResult,
+  type RecoverStickyRequestEvidenceInput,
+  type RecoverStickyRequestEvidenceResult,
+  type RequestAdditionalDeltaEvidenceInput,
   type RequestDeltaEvidenceInput,
   type RequestDeltaEvidenceResult,
+  type RequestReplacementDeltaEvidenceInput,
   type ResumeFromDeltaEvidenceInput,
   type ResumeFromDeltaEvidenceResult,
+  type ClaimQueuedAgentRunStartResult,
 } from "../validation/agentRun.js";
 
 function requireId(id: string, label: string): void {
@@ -122,6 +134,36 @@ export async function incrementAgentRunAttempt(
 }
 
 /**
+ * Atomic /start claim: queued → running with a single attempt increment.
+ * Concurrent claimants see not_queued after the first wins.
+ */
+export async function claimQueuedAgentRunStart(
+  agentRunId: string,
+): Promise<ClaimQueuedAgentRunStartResult> {
+  requireId(agentRunId, "agentRunId");
+
+  const ref = agentRunsCollection().doc(agentRunId);
+
+  return db.runTransaction(async (tx) => {
+    const snapshot = await tx.get(ref);
+
+    if (!snapshot.exists) {
+      throw new AgentRunError("not_found", "AgentRun not found");
+    }
+
+    const current = normalizeAgentRun(snapshot.data());
+    const claimed = applyClaimQueuedAgentRunStart(current);
+
+    if (claimed.outcome === "not_queued") {
+      return claimed;
+    }
+
+    tx.set(ref, claimed.agentRun, { merge: false });
+    return claimed;
+  });
+}
+
+/**
  * Atomic Evidence-request write (Phase A4):
  * pendingRequest + running → waiting_for_evidence in one transaction.
  */
@@ -142,6 +184,104 @@ export async function requestDeltaEvidence(
 
     const current = normalizeAgentRun(snapshot.data());
     const applied = applyRequestDeltaEvidence(current, input);
+
+    if (applied.outcome === "existing") {
+      return applied;
+    }
+
+    tx.set(ref, applied.agentRun, { merge: false });
+    return applied;
+  });
+
+  if (
+    result.outcome === "created" &&
+    result.agentRun.status === "waiting_for_evidence"
+  ) {
+    try {
+      const { projectAgentEvidenceRequestedActivity } = await import(
+        "../services/projectEvidenceRequestedActivity.js"
+      );
+      await projectAgentEvidenceRequestedActivity({
+        agentRun: result.agentRun,
+      });
+    } catch {
+      // Activity projection is best-effort.
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Atomic replacement Evidence request when submitted media is unusable.
+ * running → waiting_for_evidence even if direct Delta Evidence already exists.
+ */
+export async function requestReplacementDeltaEvidence(
+  agentRunId: string,
+  input: RequestReplacementDeltaEvidenceInput = {},
+): Promise<RequestDeltaEvidenceResult> {
+  requireId(agentRunId, "agentRunId");
+
+  const ref = agentRunsCollection().doc(agentRunId);
+
+  const result = await db.runTransaction(async (tx) => {
+    const snapshot = await tx.get(ref);
+
+    if (!snapshot.exists) {
+      throw new AgentRunError("not_found", "AgentRun not found");
+    }
+
+    const current = normalizeAgentRun(snapshot.data());
+    const applied = applyRequestReplacementDeltaEvidence(current, input);
+
+    if (applied.outcome === "existing") {
+      return applied;
+    }
+
+    tx.set(ref, applied.agentRun, { merge: false });
+    return applied;
+  });
+
+  if (
+    result.outcome === "created" &&
+    result.agentRun.status === "waiting_for_evidence"
+  ) {
+    try {
+      const { projectAgentEvidenceRequestedActivity } = await import(
+        "../services/projectEvidenceRequestedActivity.js"
+      );
+      await projectAgentEvidenceRequestedActivity({
+        agentRun: result.agentRun,
+      });
+    } catch {
+      // Activity projection is best-effort.
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Atomic additional Evidence request after post-analysis request_evidence
+ * when Delta Evidence already exists. Retains lastEvidenceId; no media category.
+ */
+export async function requestAdditionalDeltaEvidence(
+  agentRunId: string,
+  input: RequestAdditionalDeltaEvidenceInput = {},
+): Promise<RequestDeltaEvidenceResult> {
+  requireId(agentRunId, "agentRunId");
+
+  const ref = agentRunsCollection().doc(agentRunId);
+
+  const result = await db.runTransaction(async (tx) => {
+    const snapshot = await tx.get(ref);
+
+    if (!snapshot.exists) {
+      throw new AgentRunError("not_found", "AgentRun not found");
+    }
+
+    const current = normalizeAgentRun(snapshot.data());
+    const applied = applyRequestAdditionalDeltaEvidence(current, input);
 
     if (applied.outcome === "existing") {
       return applied;

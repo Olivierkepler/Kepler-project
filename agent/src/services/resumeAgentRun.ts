@@ -10,6 +10,7 @@ import {
 import type { AgentSummary } from "../domain/agentSummary.js";
 import {
   categorizeExecutionError,
+  isTransientProviderFailure,
   logAgentExecution,
 } from "../logging/agentExecutionLogging.js";
 import {
@@ -72,6 +73,12 @@ export type ResumeAgentRunResult =
       mismatchReason: string;
     }
   | {
+      kind: "transient_retry";
+      agentRun: AgentRun;
+      errorCategory: string;
+      message: string;
+    }
+  | {
       kind: "noop";
       agentRun: AgentRun;
       reason:
@@ -96,6 +103,8 @@ export type ResumeAgentRunDeps = {
   resumeFromDeltaEvidenceFn?: typeof resumeFromDeltaEvidence;
   updateAgentRunStateFn?: typeof updateAgentRunState;
   requestDeltaEvidenceFn?: typeof requestDeltaEvidence;
+  requestReplacementDeltaEvidenceFn?: FieldVarianceAssessmentCycleDeps["requestReplacementDeltaEvidenceFn"];
+  requestAdditionalDeltaEvidenceFn?: FieldVarianceAssessmentCycleDeps["requestAdditionalDeltaEvidenceFn"];
   resolveRequestedProjectMemberIdFn?: FieldVarianceAssessmentCycleDeps["resolveRequestedProjectMemberIdFn"];
   loaders?: DomainLoaders;
   runAgent?: FieldVarianceAgentRunner;
@@ -209,6 +218,8 @@ export async function resumeAgentRunExecution(
     });
     return { kind: "noop", agentRun: existing, reason: "not_waiting" };
   }
+
+  const pendingBeforeClaim = existing.pendingRequest;
 
   const evidence = await getEvidence(evidenceId);
   if (!evidence) {
@@ -326,6 +337,8 @@ export async function resumeAgentRunExecution(
   const cycle = await executeFieldVarianceAssessmentCycle(agentRun, {
     updateAgentRunStateFn: updateState,
     requestDeltaEvidenceFn: requestEvidence,
+    requestReplacementDeltaEvidenceFn: deps.requestReplacementDeltaEvidenceFn,
+    requestAdditionalDeltaEvidenceFn: deps.requestAdditionalDeltaEvidenceFn,
     resolveRequestedProjectMemberIdFn: deps.resolveRequestedProjectMemberIdFn,
     loaders,
     runAgent: deps.runAgent,
@@ -335,6 +348,33 @@ export async function resumeAgentRunExecution(
     preferredEvidenceId: evidence.id,
     model,
   });
+
+  if (cycle.kind === "transient_retry") {
+    // Undo resume claim so the same CT resume delivery can re-claim safely.
+    const restored = await updateState(cycle.agentRun.id, {
+      status: "waiting_for_evidence",
+      currentStep: "waiting_for_evidence",
+      pendingRequest: pendingBeforeClaim,
+      lastEvidenceId: null,
+      errorCategory: cycle.errorCategory,
+    });
+    logAgentExecution({
+      event: "agent_execution_transient_requeue",
+      agentRunId: restored.id,
+      evidenceId: evidence.id,
+      projectId: restored.projectId,
+      workflowType: restored.workflowType,
+      step: restored.currentStep,
+      attemptCount: restored.attemptCount,
+      errorCategory: cycle.errorCategory,
+    });
+    return {
+      kind: "transient_retry",
+      agentRun: restored,
+      errorCategory: cycle.errorCategory,
+      message: cycle.message,
+    };
+  }
 
   if (cycle.kind === "failed") {
     logAgentExecution({
@@ -403,6 +443,36 @@ export async function resumeAgentRunExecution(
         deterministicPolicy: cycle.deterministicPolicy,
       };
     } catch (error) {
+      if (
+        agentRunAfter.attemptCount < agentRunAfter.maxAttempts &&
+        isTransientProviderFailure(error)
+      ) {
+        const errorCategory = categorizeExecutionError(error);
+        const restored = await updateState(agentRunAfter.id, {
+          status: "waiting_for_evidence",
+          currentStep: "waiting_for_evidence",
+          pendingRequest: pendingBeforeClaim,
+          lastEvidenceId: null,
+          errorCategory,
+        });
+        logAgentExecution({
+          event: "agent_execution_transient_requeue",
+          agentRunId: restored.id,
+          evidenceId: evidence.id,
+          projectId: restored.projectId,
+          workflowType: restored.workflowType,
+          step: restored.currentStep,
+          attemptCount: restored.attemptCount,
+          errorCategory,
+        });
+        return {
+          kind: "transient_retry",
+          agentRun: restored,
+          errorCategory,
+          message:
+            error instanceof Error ? error.message : "agent_escalation_failed",
+        };
+      }
       const errorCategory = categorizeExecutionError(error);
       return {
         kind: "failed",

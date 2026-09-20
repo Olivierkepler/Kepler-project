@@ -11,11 +11,19 @@ import {
 } from "../domain/agentRun.js";
 import { buildDeltaEvidenceRequestId } from "../domain/deltaEvidenceRequest.js";
 import {
+  REPLACEMENT_EVIDENCE_REQUEST_MESSAGE,
+  classifyRecoverableEvidenceMediaFailure,
+  isRecoverableEvidenceQualityError,
+} from "../domain/recoverableEvidenceFailure.js";
+import {
   categorizeExecutionError,
+  isTransientProviderFailure,
   logAgentExecution,
 } from "../logging/agentExecutionLogging.js";
 import {
+  requestAdditionalDeltaEvidence,
   requestDeltaEvidence,
+  requestReplacementDeltaEvidence,
   updateAgentRunState,
 } from "../repositories/agentRunsRepository.js";
 import { resolveRequestedProjectMemberIdForPlanItem } from "./resolveEvidenceRequestRecipient.js";
@@ -62,11 +70,20 @@ export type FieldVarianceAssessmentCycleResult =
       errorCategory: string;
       message: string;
       evidenceAnalysis: EvidenceAnalysis | null;
+    }
+  | {
+      kind: "transient_retry";
+      agentRun: AgentRun;
+      errorCategory: string;
+      message: string;
+      evidenceAnalysis: EvidenceAnalysis | null;
     };
 
 export type FieldVarianceAssessmentCycleDeps = {
   updateAgentRunStateFn?: typeof updateAgentRunState;
   requestDeltaEvidenceFn?: typeof requestDeltaEvidence;
+  requestReplacementDeltaEvidenceFn?: typeof requestReplacementDeltaEvidence;
+  requestAdditionalDeltaEvidenceFn?: typeof requestAdditionalDeltaEvidence;
   resolveRequestedProjectMemberIdFn?: typeof resolveRequestedProjectMemberIdForPlanItem;
   loaders: DomainLoaders;
   runAgent?: FieldVarianceAgentRunner;
@@ -90,6 +107,10 @@ export async function executeFieldVarianceAssessmentCycle(
 ): Promise<FieldVarianceAssessmentCycleResult> {
   const updateState = deps.updateAgentRunStateFn ?? updateAgentRunState;
   const requestEvidence = deps.requestDeltaEvidenceFn ?? requestDeltaEvidence;
+  const requestReplacement =
+    deps.requestReplacementDeltaEvidenceFn ?? requestReplacementDeltaEvidence;
+  const requestAdditional =
+    deps.requestAdditionalDeltaEvidenceFn ?? requestAdditionalDeltaEvidence;
   const resolveRecipient =
     deps.resolveRequestedProjectMemberIdFn ??
     resolveRequestedProjectMemberIdForPlanItem;
@@ -104,6 +125,89 @@ export async function executeFieldVarianceAssessmentCycle(
     agentRun,
     loaders: deps.loaders,
   };
+
+  async function reopenWaitingForReplacementEvidence(
+    analysis: EvidenceAnalysis | null,
+  ): Promise<FieldVarianceAssessmentCycleResult> {
+    const requestId = buildDeltaEvidenceRequestId(agentRun.id);
+    const requestedProjectMemberId = await resolveRecipient({
+      projectId: agentRun.projectId,
+      planItemId: agentRun.contextRefs.remotePlanItemId,
+    });
+
+    logAgentExecution({
+      event: "agent_evidence_request_started",
+      agentRunId: agentRun.id,
+      projectId: agentRun.projectId,
+      workflowType: agentRun.workflowType,
+      step: agentRun.currentStep,
+      requestId,
+      errorCategory: "unsupported_media",
+    });
+
+    const requestResult = await requestReplacement(agentRun.id, {
+      message:
+        analysis?.userVisibleRationale?.trim() ||
+        REPLACEMENT_EVIDENCE_REQUEST_MESSAGE,
+      requestedProjectMemberId,
+    });
+
+    agentRun = requestResult.agentRun;
+    const pendingRequest = agentRun.pendingRequest;
+    if (
+      pendingRequest === null ||
+      pendingRequest.kind !== "delta_evidence"
+    ) {
+      throw new AgentRunError(
+        "evidence_request_missing_pending",
+        "Replacement evidence request succeeded without pendingRequest",
+      );
+    }
+
+    logAgentExecution({
+      event:
+        requestResult.outcome === "existing"
+          ? "agent_evidence_request_existing"
+          : "agent_evidence_request_created",
+      agentRunId: agentRun.id,
+      projectId: agentRun.projectId,
+      workflowType: agentRun.workflowType,
+      step: agentRun.currentStep,
+      requestId: pendingRequest.requestId,
+      errorCategory: "unsupported_media",
+    });
+
+    logAgentExecution({
+      event: "agent_waiting_for_evidence",
+      agentRunId: agentRun.id,
+      projectId: agentRun.projectId,
+      workflowType: agentRun.workflowType,
+      step: agentRun.currentStep,
+      requestId: pendingRequest.requestId,
+      errorCategory: "unsupported_media",
+    });
+
+    // Synthetic assessment for cycle result typing — no model call for bad media.
+    const assessment: FieldVarianceAssessment = {
+      summary: "Submitted evidence could not be analyzed.",
+      evidenceAssessment: "Evidence media is unusable for analysis.",
+      recommendedAction: "request_evidence",
+      userVisibleRationale: pendingRequest.message,
+    };
+
+    return {
+      kind: "waiting_for_evidence",
+      agentRun,
+      assessment,
+      deterministicPolicy: computeDirectDeltaEvidencePolicy({
+        agentRun,
+        evidence: await deps.loaders.getEvidenceForProject(agentRun.projectId),
+      }),
+      pendingRequest,
+      requestOutcome: requestResult.outcome,
+      evidenceAnalysis: analysis,
+    };
+  }
 
   try {
     const evidence = await deps.loaders.getEvidenceForProject(
@@ -142,6 +246,9 @@ export async function executeFieldVarianceAssessmentCycle(
 
       if (analysisResult.kind === "analyzed") {
         evidenceAnalysis = analysisResult.analysis;
+        if (evidenceAnalysis.relevance === "unsupported_media") {
+          return await reopenWaitingForReplacementEvidence(evidenceAnalysis);
+        }
       }
     }
 
@@ -195,19 +302,9 @@ export async function executeFieldVarianceAssessmentCycle(
     }
 
     if (gate.action === "request_evidence") {
-      // A4 write is only valid when presence policy is false.
-      // A6 may recommend more docs when presence is true but relevance is weak —
-      // remain running with analysis in the cycle result (no waiting transition).
-      if (deterministicPolicy.hasDirectDeltaEvidence) {
-        return {
-          kind: "started",
-          agentRun,
-          assessment,
-          deterministicPolicy,
-          evidenceAnalysis,
-        };
-      }
-
+      // Presence policy gates whether analysis can start. After analysis, an
+      // explicit request_evidence decision always reopens waiting_for_evidence —
+      // even when qualifying Delta Evidence already exists (needs more docs).
       const requestId = buildDeltaEvidenceRequestId(agentRun.id);
       logAgentExecution({
         event: "agent_evidence_request_started",
@@ -225,11 +322,18 @@ export async function executeFieldVarianceAssessmentCycle(
           planItemId: agentRun.contextRefs.remotePlanItemId,
         });
 
-        requestResult = await requestEvidence(agentRun.id, {
-          message: assessment.userVisibleRationale,
-          hasDirectDeltaEvidence: deterministicPolicy.hasDirectDeltaEvidence,
-          requestedProjectMemberId,
-        });
+        if (deterministicPolicy.hasDirectDeltaEvidence) {
+          requestResult = await requestAdditional(agentRun.id, {
+            message: assessment.userVisibleRationale,
+            requestedProjectMemberId,
+          });
+        } else {
+          requestResult = await requestEvidence(agentRun.id, {
+            message: assessment.userVisibleRationale,
+            hasDirectDeltaEvidence: false,
+            requestedProjectMemberId,
+          });
+        }
       } catch (error) {
         const errorCategory =
           error instanceof AgentRunError
@@ -302,7 +406,61 @@ export async function executeFieldVarianceAssessmentCycle(
       evidenceAnalysis,
     };
   } catch (error) {
+    if (
+      isRecoverableEvidenceQualityError(error) ||
+      classifyRecoverableEvidenceMediaFailure(error)
+    ) {
+      try {
+        return await reopenWaitingForReplacementEvidence(evidenceAnalysis);
+      } catch (recoveryError) {
+        const errorCategory = categorizeExecutionError(recoveryError);
+        try {
+          agentRun = await updateState(agentRun.id, {
+            status: "failed",
+            currentStep: "failed",
+            errorCategory,
+          });
+        } catch {
+          // Best-effort failure transition.
+        }
+        return {
+          kind: "failed",
+          agentRun,
+          errorCategory,
+          message:
+            recoveryError instanceof Error
+              ? recoveryError.message
+              : "agent_execution_failed",
+          evidenceAnalysis,
+        };
+      }
+    }
+
     const errorCategory = categorizeExecutionError(error);
+    const attemptsRemain =
+      agentRun.attemptCount < agentRun.maxAttempts &&
+      isTransientProviderFailure(error);
+
+    if (attemptsRemain) {
+      logAgentExecution({
+        event: "agent_execution_transient_requeue",
+        agentRunId: agentRun.id,
+        projectId: agentRun.projectId,
+        workflowType: agentRun.workflowType,
+        step: agentRun.currentStep,
+        attemptCount: agentRun.attemptCount,
+        errorCategory,
+      });
+      return {
+        kind: "transient_retry",
+        agentRun,
+        errorCategory,
+        message:
+          error instanceof Error ? error.message : "agent_execution_failed",
+        evidenceAnalysis,
+      };
+    }
+
     try {
       agentRun = await updateState(agentRun.id, {
         status: "failed",

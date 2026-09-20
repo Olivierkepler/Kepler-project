@@ -25,6 +25,7 @@ import { resumeAgentRunExecution } from "../services/resumeAgentRun.js";
 import {
   applyAgentRunStateUpdate,
   applyRequestDeltaEvidence,
+  applyRequestReplacementDeltaEvidence,
   applyResumeFromDeltaEvidence,
 } from "../validation/agentRun.js";
 import type { DomainLoaders } from "../tools/toolContext.js";
@@ -128,8 +129,21 @@ function makeAssessment(
 }
 
 function jpegBytes(): Buffer {
-  // Minimal JPEG-like buffer for size tests (not a real image decode).
+  // Minimal JPEG SOI magic for size/magic tests (not a full image decode).
   return Buffer.from([0xff, 0xd8, 0xff, 0xd9, ...Array(100).fill(1)]);
+}
+
+function pngBytes(): Buffer {
+  return Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4,
+  ]);
+}
+
+function webpBytes(): Buffer {
+  return Buffer.from([
+    0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 1,
+    2,
+  ]);
 }
 
 async function main(): Promise<void> {
@@ -286,8 +300,8 @@ async function main(): Promise<void> {
             photo: {
               evidenceId: photo.id,
               mimeType: mime,
-              byteSize: 10,
-              bytes: Buffer.alloc(10),
+              byteSize: mime === "image/png" ? pngBytes().length : webpBytes().length,
+              bytes: mime === "image/png" ? pngBytes() : webpBytes(),
             },
           }),
           runEvidenceAnalysis: async (input) => {
@@ -558,6 +572,13 @@ async function main(): Promise<void> {
           store.runs.set(id, result.agentRun);
           return result;
         },
+        requestReplacementDeltaEvidenceFn: async (id, input) => {
+          const current = store.runs.get(id)!;
+          const result = applyRequestReplacementDeltaEvidence(current, input);
+          store.runs.set(id, result.agentRun);
+          return result;
+        },
+        resolveRequestedProjectMemberIdFn: async () => null,
         enableEvidenceAnalysis: true,
         preferredEvidenceId: photo.id,
         loadPhotoBytesFn: async (evidence) => {
@@ -662,23 +683,36 @@ async function main(): Promise<void> {
         getDeltaById: async () => undefined,
         getEvidenceForProject: async () => [...store.evidence.values()],
       },
-      enableEvidenceAnalysis: true,
-      enableSummaryPersistence: false,
-      loadPhotoBytesFn: async (evidence) => {
-        store.selectedId = evidence.id;
-        return {
-          ok: true,
-          photo: {
-            evidenceId: evidence.id,
-            mimeType: "image/jpeg",
-            byteSize: 8,
-            bytes: Buffer.alloc(8),
-          },
-        };
-      },
-      runEvidenceAnalysis: createStubEvidenceAnalysisRunner(makeAnalysis()),
-      runAgent: createStubFieldVarianceAgentRunner(makeAssessment()),
-    });
+        requestDeltaEvidenceFn: async (id, input) => {
+          const current = store.runs.get(id)!;
+          const result = applyRequestDeltaEvidence(current, input);
+          store.runs.set(id, result.agentRun);
+          return result;
+        },
+        requestReplacementDeltaEvidenceFn: async (id, input) => {
+          const current = store.runs.get(id)!;
+          const result = applyRequestReplacementDeltaEvidence(current, input);
+          store.runs.set(id, result.agentRun);
+          return result;
+        },
+        resolveRequestedProjectMemberIdFn: async () => null,
+        enableEvidenceAnalysis: true,
+        enableSummaryPersistence: false,
+        loadPhotoBytesFn: async (evidence) => {
+          store.selectedId = evidence.id;
+          return {
+            ok: true,
+            photo: {
+              evidenceId: evidence.id,
+              mimeType: "image/jpeg",
+              byteSize: jpegBytes().length,
+              bytes: jpegBytes(),
+            },
+          };
+        },
+        runEvidenceAnalysis: createStubEvidenceAnalysisRunner(makeAnalysis()),
+        runAgent: createStubFieldVarianceAgentRunner(makeAssessment()),
+      });
 
     check(result.kind === "resumed", "2. resume cycle runs");
     check(store.selectedId === trigger.id, "2. triggering resume photo preferred");

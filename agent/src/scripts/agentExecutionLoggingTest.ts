@@ -4,7 +4,10 @@
  * Run: npm run test:logging
  */
 
-import { categorizeExecutionError } from "../logging/agentExecutionLogging.js";
+import {
+  categorizeExecutionError,
+  isTransientProviderFailure,
+} from "../logging/agentExecutionLogging.js";
 
 let passed = 0;
 let failed = 0;
@@ -83,6 +86,26 @@ assert(
     !redacted.includes("https://"),
   "obvious secret/token redaction",
 );
+
+assert(
+  isTransientProviderFailure(
+    new Error("Resource exhausted. Please try again later."),
+  ),
+  "RESOURCE_EXHAUSTED is transient",
+);
+assert(
+  isTransientProviderFailure({ status: 429, message: "Too Many Requests" }),
+  "429 is transient",
+);
+assert(
+  !isTransientProviderFailure({ code: "PERMISSION_DENIED", message: "no" }),
+  "PERMISSION_DENIED is not transient",
+);
+assert(
+  !isTransientProviderFailure(new Error("unavailable")),
+  "bare unavailable is not transient",
+);
+assert(!isTransientProviderFailure("unknown"), "unknown is not transient");
 
 console.log(`\nagentExecutionLoggingTest: ${passed} passed, ${failed} failed`);
 

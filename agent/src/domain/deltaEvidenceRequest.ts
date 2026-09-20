@@ -14,6 +14,10 @@ export function buildDeltaEvidenceRequestId(agentRunId: string): string {
 export const DEFAULT_DELTA_EVIDENCE_REQUEST_MESSAGE =
   "Add a field photo or note documenting this difference." as const;
 
+/** Post-analysis request_evidence when some Evidence already exists. */
+export const ADDITIONAL_DELTA_EVIDENCE_REQUEST_MESSAGE =
+  "Capture another clear photo showing the affected work." as const;
+
 export const MAX_DELTA_EVIDENCE_REQUEST_MESSAGE_LENGTH = 280;
 
 const UNSAFE_MESSAGE_PATTERNS: readonly RegExp[] = [

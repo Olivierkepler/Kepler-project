@@ -161,6 +161,7 @@ const ALLOWED_STATUS_TRANSITIONS: Record<
 > = {
   queued: new Set(["running"]),
   running: new Set([
+    "queued",
     "waiting_for_evidence",
     "completed",
     "failed",
@@ -168,7 +169,9 @@ const ALLOWED_STATUS_TRANSITIONS: Record<
   ]),
   waiting_for_evidence: new Set(["running", "failed", "escalated"]),
   completed: new Set(),
-  failed: new Set(),
+  // Narrow: only explicit recoverable-evidence recovery may leave failed.
+  // /start and /resume still treat failed as terminal via isTerminalAgentRunStatus.
+  failed: new Set(["waiting_for_evidence"]),
   escalated: new Set(),
 };
 

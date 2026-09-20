@@ -11,6 +11,7 @@ import {
 import type { AgentSummary } from "../domain/agentSummary.js";
 import {
   categorizeExecutionError,
+  isTransientProviderFailure,
   logAgentExecution,
 } from "../logging/agentExecutionLogging.js";
 import {
@@ -18,8 +19,8 @@ import {
   getAgentSummaryForRun,
 } from "../repositories/agentSummariesRepository.js";
 import {
+  claimQueuedAgentRunStart,
   getAgentRunById,
-  incrementAgentRunAttempt,
   requestDeltaEvidence,
   updateAgentRunState,
 } from "../repositories/agentRunsRepository.js";
@@ -29,6 +30,7 @@ import {
   type DomainLoaders,
 } from "../tools/toolContext.js";
 import type { loadEvidencePhotoBytes } from "../storage/evidencePhotoStorage.js";
+import type { ClaimQueuedAgentRunStartResult } from "../validation/agentRun.js";
 import { escalateFieldVarianceAgentRun } from "./escalateAgentRun.js";
 import {
   executeFieldVarianceAssessmentCycle,
@@ -72,6 +74,12 @@ export type StartAgentRunResult =
       mismatchReason: string;
     }
   | {
+      kind: "transient_retry";
+      agentRun: AgentRun;
+      errorCategory: string;
+      message: string;
+    }
+  | {
       kind: "noop";
       agentRun: AgentRun;
       reason: "already_running" | "terminal" | "waiting_for_evidence";
@@ -86,8 +94,10 @@ export type StartAgentRunResult =
 export type StartAgentRunDeps = {
   getAgentRunByIdFn?: typeof getAgentRunById;
   updateAgentRunStateFn?: typeof updateAgentRunState;
-  incrementAgentRunAttemptFn?: typeof incrementAgentRunAttempt;
+  claimQueuedAgentRunStartFn?: typeof claimQueuedAgentRunStart;
   requestDeltaEvidenceFn?: typeof requestDeltaEvidence;
+  requestReplacementDeltaEvidenceFn?: FieldVarianceAssessmentCycleDeps["requestReplacementDeltaEvidenceFn"];
+  requestAdditionalDeltaEvidenceFn?: FieldVarianceAssessmentCycleDeps["requestAdditionalDeltaEvidenceFn"];
   resolveRequestedProjectMemberIdFn?: FieldVarianceAssessmentCycleDeps["resolveRequestedProjectMemberIdFn"];
   loaders?: DomainLoaders;
   runAgent?: FieldVarianceAgentRunner;
@@ -101,6 +111,18 @@ export type StartAgentRunDeps = {
   model?: string;
 };
 
+function noopForUnclaimed(
+  agentRun: AgentRun,
+): Extract<StartAgentRunResult, { kind: "noop" }> {
+  if (isTerminalAgentRunStatus(agentRun.status)) {
+    return { kind: "noop", agentRun, reason: "terminal" };
+  }
+  if (agentRun.status === "waiting_for_evidence") {
+    return { kind: "noop", agentRun, reason: "waiting_for_evidence" };
+  }
+  return { kind: "noop", agentRun, reason: "already_running" };
+}
+
 /**
  * Trusted AgentRun entry for Cloud Tasks start.
  * Only agentRunId is trusted from the task; all scope comes from Firestore.
@@ -111,8 +133,8 @@ export async function startAgentRunExecution(
 ): Promise<StartAgentRunResult> {
   const getById = deps.getAgentRunByIdFn ?? getAgentRunById;
   const updateState = deps.updateAgentRunStateFn ?? updateAgentRunState;
-  const incrementAttempt =
-    deps.incrementAgentRunAttemptFn ?? incrementAgentRunAttempt;
+  const claimStart =
+    deps.claimQueuedAgentRunStartFn ?? claimQueuedAgentRunStart;
   const requestEvidence = deps.requestDeltaEvidenceFn ?? requestDeltaEvidence;
   const loaders = deps.loaders ?? createFirestoreDomainLoaders();
   const runAgent = deps.runAgent ?? runFieldVarianceAgentWithAdk;
@@ -182,51 +204,64 @@ export async function startAgentRunExecution(
     return { kind: "noop", agentRun: existing, reason: "already_running" };
   }
 
-  let agentRun: AgentRun;
+  let claim: ClaimQueuedAgentRunStartResult;
   try {
-    agentRun = await incrementAttempt(existing.id);
+    claim = await claimStart(existing.id);
   } catch (error) {
     const category =
       error instanceof AgentRunError
         ? error.code
         : categorizeExecutionError(error);
-
-    if (category === "attempt_count_exceeds_max") {
-      // A1 allows queued → running → failed (not queued → failed directly).
-      const running = await updateState(existing.id, {
-        status: "running",
-        currentStep: "load_context",
-        errorCategory: "attempt_count_exceeds_max",
-      });
-      const failed = await updateState(running.id, {
-        status: "failed",
-        currentStep: "failed",
-        errorCategory: "attempt_count_exceeds_max",
-      });
-      logAgentExecution({
-        event: "agent_execution_failed",
-        agentRunId: failed.id,
-        projectId: failed.projectId,
-        workflowType: failed.workflowType,
-        step: failed.currentStep,
-        attemptCount: failed.attemptCount,
-        errorCategory: "attempt_count_exceeds_max",
-      });
-      return {
-        kind: "failed",
-        agentRun: failed,
-        errorCategory: "attempt_count_exceeds_max",
-        message: "AgentRun maxAttempts exhausted",
-      };
-    }
-    throw error;
+    logAgentExecution({
+      event: "agent_execution_failed",
+      agentRunId: existing.id,
+      projectId: existing.projectId,
+      workflowType: existing.workflowType,
+      step: existing.currentStep,
+      attemptCount: existing.attemptCount,
+      errorCategory: category,
+    });
+    return {
+      kind: "failed",
+      agentRun: existing,
+      errorCategory: category,
+      message: error instanceof Error ? error.message : "claim_failed",
+    };
   }
 
-  agentRun = await updateState(agentRun.id, {
-    status: "running",
-    currentStep: "load_context",
-    errorCategory: null,
-  });
+  if (claim.outcome === "not_queued") {
+    const noop = noopForUnclaimed(claim.agentRun);
+    logAgentExecution({
+      event: "agent_execution_noop",
+      agentRunId: claim.agentRun.id,
+      projectId: claim.agentRun.projectId,
+      workflowType: claim.agentRun.workflowType,
+      step: claim.agentRun.currentStep,
+      attemptCount: claim.agentRun.attemptCount,
+      noopReason: noop.reason,
+    });
+    return noop;
+  }
+
+  if (claim.outcome === "attempt_exhausted") {
+    logAgentExecution({
+      event: "agent_execution_failed",
+      agentRunId: claim.agentRun.id,
+      projectId: claim.agentRun.projectId,
+      workflowType: claim.agentRun.workflowType,
+      step: claim.agentRun.currentStep,
+      attemptCount: claim.agentRun.attemptCount,
+      errorCategory: "attempt_count_exceeds_max",
+    });
+    return {
+      kind: "failed",
+      agentRun: claim.agentRun,
+      errorCategory: "attempt_count_exceeds_max",
+      message: "AgentRun maxAttempts exhausted",
+    };
+  }
+
+  const agentRun = claim.agentRun;
 
   logAgentExecution({
     event: "agent_execution_started",
@@ -237,11 +272,11 @@ export async function startAgentRunExecution(
     attemptCount: agentRun.attemptCount,
   });
 
-  
-
   const cycle = await executeFieldVarianceAssessmentCycle(agentRun, {
     updateAgentRunStateFn: updateState,
     requestDeltaEvidenceFn: requestEvidence,
+    requestReplacementDeltaEvidenceFn: deps.requestReplacementDeltaEvidenceFn,
+    requestAdditionalDeltaEvidenceFn: deps.requestAdditionalDeltaEvidenceFn,
     resolveRequestedProjectMemberIdFn: deps.resolveRequestedProjectMemberIdFn,
     loaders,
     runAgent,
@@ -250,6 +285,29 @@ export async function startAgentRunExecution(
     enableEvidenceAnalysis: deps.enableEvidenceAnalysis,
     model,
   });
+
+  if (cycle.kind === "transient_retry") {
+    const requeued = await updateState(cycle.agentRun.id, {
+      status: "queued",
+      currentStep: "queued",
+      errorCategory: cycle.errorCategory,
+    });
+    logAgentExecution({
+      event: "agent_execution_transient_requeue",
+      agentRunId: requeued.id,
+      projectId: requeued.projectId,
+      workflowType: requeued.workflowType,
+      step: requeued.currentStep,
+      attemptCount: requeued.attemptCount,
+      errorCategory: cycle.errorCategory,
+    });
+    return {
+      kind: "transient_retry",
+      agentRun: requeued,
+      errorCategory: cycle.errorCategory,
+      message: cycle.message,
+    };
+  }
 
   if (cycle.kind === "failed") {
     return {
@@ -297,14 +355,11 @@ export async function startAgentRunExecution(
         deterministicPolicy: cycle.deterministicPolicy,
       };
     } catch (error) {
-      const errorCategory = categorizeExecutionError(error);
-      return {
-        kind: "failed",
+      return await finalizePostCycleProviderFailure({
         agentRun: agentRunAfter,
-        errorCategory,
-        message:
-          error instanceof Error ? error.message : "agent_escalation_failed",
-      };
+        error,
+        updateState,
+      });
     }
   }
 
@@ -344,12 +399,12 @@ export async function startAgentRunExecution(
     }
 
     if (prepared.kind === "failed") {
-      return {
-        kind: "failed",
-        agentRun: prepared.agentRun,
+      return await finalizePostCycleProviderFailure({
+        agentRun: prepared.agentRun ?? agentRunAfter,
+        error: new Error(prepared.message),
+        updateState,
         errorCategory: prepared.errorCategory,
-        message: prepared.message,
-      };
+      });
     }
 
     // Blocked (e.g. missing analysis) — remain at prepare_summary for later.
@@ -361,5 +416,67 @@ export async function startAgentRunExecution(
     agentRun: agentRunAfter,
     assessment: cycle.assessment,
     deterministicPolicy: cycle.deterministicPolicy,
+  };
+}
+
+async function finalizePostCycleProviderFailure(args: {
+  agentRun: AgentRun;
+  error: unknown;
+  updateState: typeof updateAgentRunState;
+  errorCategory?: string;
+}): Promise<
+  Extract<StartAgentRunResult, { kind: "failed" | "transient_retry" }>
+> {
+  const errorCategory =
+    args.errorCategory ?? categorizeExecutionError(args.error);
+  const message =
+    args.error instanceof Error
+      ? args.error.message
+      : "agent_execution_failed";
+
+  if (
+    args.agentRun.attemptCount < args.agentRun.maxAttempts &&
+    isTransientProviderFailure(args.errorCategory ?? args.error)
+  ) {
+    const requeued = await args.updateState(args.agentRun.id, {
+      status: "queued",
+      currentStep: "queued",
+      errorCategory,
+    });
+    logAgentExecution({
+      event: "agent_execution_transient_requeue",
+      agentRunId: requeued.id,
+      projectId: requeued.projectId,
+      workflowType: requeued.workflowType,
+      step: requeued.currentStep,
+      attemptCount: requeued.attemptCount,
+      errorCategory,
+    });
+    return {
+      kind: "transient_retry",
+      agentRun: requeued,
+      errorCategory,
+      message,
+    };
+  }
+
+  let failedRun = args.agentRun;
+  if (failedRun.status !== "failed") {
+    try {
+      failedRun = await args.updateState(failedRun.id, {
+        status: "failed",
+        currentStep: "failed",
+        errorCategory,
+      });
+    } catch {
+      // Best-effort.
+    }
+  }
+
+  return {
+    kind: "failed",
+    agentRun: failedRun,
+    errorCategory,
+    message,
   };
 }
