@@ -209,7 +209,7 @@ const styles = StyleSheet.create({
   },
 
   videoOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor:
@@ -242,7 +242,7 @@ const styles = StyleSheet.create({
   },
 
   overflow: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor:

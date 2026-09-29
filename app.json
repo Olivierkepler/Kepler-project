@@ -13,6 +13,7 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
+      "deploymentTarget": "16.4",
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.buildsigma-app"
     },
@@ -28,6 +29,15 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "./plugins/with-pod-deployment-target-normalization",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "enableSceneSupport": true
+          }
+        }
+      ],
       [
         "expo-image-picker",
         {

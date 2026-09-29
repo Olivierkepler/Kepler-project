@@ -680,7 +680,7 @@ const styles =
     /* ---------------------------------------------------------------------- */
 
     glassBackground: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
 
       marginHorizontal:
         4,
@@ -699,7 +699,7 @@ const styles =
     },
 
     glassTint: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
 
       backgroundColor:
         Platform.OS ===
@@ -737,7 +737,7 @@ const styles =
     /* ---------------------------------------------------------------------- */
 
     glassBorder: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
 
       borderRadius:
         TAB_RADIUS,
@@ -824,7 +824,7 @@ const styles =
     },
 
     activeGlassPillTint: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
 
       backgroundColor:
         Platform.OS ===
@@ -834,7 +834,7 @@ const styles =
     },
 
     activeGlassPillBorder: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
 
       borderRadius:
         16,

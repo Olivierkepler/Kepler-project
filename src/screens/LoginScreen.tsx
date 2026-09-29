@@ -531,7 +531,7 @@ const styles =
      * reduce 0.12 to something like 0.05.
      */
     backgroundVeil: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
 
       backgroundColor:
         "rgba(255,255,255,0.12)",

@@ -121,7 +121,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   gridBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     opacity: 0.35,
     padding: 12,
     justifyContent: "space-between",

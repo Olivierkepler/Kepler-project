@@ -2365,7 +2365,7 @@ const styles =
      * without competing with project content.
      */
     backgroundWash: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
 
       backgroundColor:
         "rgba(255,255,255,0.16)",
@@ -2430,14 +2430,14 @@ const styles =
     },
 
     headerGlass: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
 
       overflow:
         "hidden",
     },
 
     headerGlassTint: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
 
       backgroundColor:
         Platform.OS ===
