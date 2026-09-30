@@ -328,6 +328,8 @@ export default function ProjectPlan({
     organizeOpen,
     setOrganizeOpen,
   ] = useState(false);
+  const [organizeUnassignedItems, setOrganizeUnassignedItems] =
+    useState<PlanItem[] | null>(null);
 
   const [
     editingWorkPackage,
@@ -1432,9 +1434,10 @@ export default function ProjectPlan({
                 styles.organizeButtonPressed,
             ]}
             onPress={() =>
-              setOrganizeOpen(
-                true,
-              )
+              {
+                setOrganizeUnassignedItems(null);
+                setOrganizeOpen(true);
+              }
             }
             accessibilityRole="button"
             accessibilityLabel="Organize work"
@@ -1660,6 +1663,26 @@ export default function ProjectPlan({
                             />
                           </Pressable>
                         ) : null}
+                        {user?.uid && !group.workPackageId ? (
+                          <Pressable
+                            onPress={() => {
+                              setOrganizeUnassignedItems(group.items);
+                              setOrganizeOpen(true);
+                            }}
+                            style={({ pressed }) => [
+                              styles.unassignedOrganizeButton,
+                              pressed && styles.unassignedOrganizeButtonPressed,
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel="Organize unassigned work"
+                            hitSlop={6}
+                          >
+                            <Ionicons name="people-outline" size={14} color={KEPLER_NAVY} />
+                            <Text style={styles.unassignedOrganizeButtonText}>
+                              Organize Work
+                            </Text>
+                          </Pressable>
+                        ) : null}
                       </View>
 
                       {/* ------------------------------------------------ */}
@@ -1858,12 +1881,14 @@ export default function ProjectPlan({
           }
           canMutate
           planItems={
-            sortedPlanItems
+            organizeUnassignedItems ?? sortedPlanItems
           }
+          selectionMode={organizeUnassignedItems ? "unassignedItemsFirst" : "default"}
           onClose={() =>
-            setOrganizeOpen(
-              false,
-            )
+            {
+              setOrganizeOpen(false);
+              setOrganizeUnassignedItems(null);
+            }
           }
           onUpdated={() => {
             void reloadAssignmentContext();
@@ -2209,6 +2234,27 @@ const styles =
       alignItems: "center",
       justifyContent: "center",
       backgroundColor: "rgba(1,33,105,0.012)",
+    },
+
+    unassignedOrganizeButton: {
+      alignSelf: "center",
+      minHeight: 34,
+      marginHorizontal: 8,
+      paddingHorizontal: 10,
+      borderRadius: 10,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 5,
+      backgroundColor: "rgba(1,33,105,0.07)",
+    },
+    unassignedOrganizeButtonPressed: {
+      opacity: 0.78,
+    },
+    unassignedOrganizeButtonText: {
+      ...typography.caption,
+      color: KEPLER_NAVY,
+      fontWeight: "600",
     },
 
     packageHeaderText: {

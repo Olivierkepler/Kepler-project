@@ -14,11 +14,14 @@ import {
   updateRemoteWorkPackageAssignment,
   type RemoteWorkPackageAssignment,
 } from "../../services/api/workPackageAssignments";
+import { assignTeamToWorkPackage as assignRemoteTeam, listTeamWorkPackageAssignments, removeTeamFromWorkPackage } from "../../services/api/teamWorkPackageAssignments";
+import { listTeams, listTeamMembers } from "../../services/api/teams";
 import {
   getRemoteWorkPackagesForProject,
   type RemoteWorkPackage,
 } from "../../services/api/workPackages";
 import { getRemoteProjectId } from "../../store/projectCloudMappings";
+import { getRemoteWorkPackageId } from "../../store/workPackageCloudMappings";
 import { getProjectMembersForProject } from "../../store/projectMembers";
 import { getRemoteProjectMembers } from "../../services/api/projects";
 import {
@@ -45,6 +48,8 @@ import type {
   ProjectMemberRole,
 } from "../../types/projectMember";
 import type { WorkPackage, WorkPackageStatus } from "../../types/workPackage";
+import type { TeamWorkPackageAssignment } from "../../types/teamWorkPackageAssignment";
+import type { Team } from "../../types/team";
 import type {
   WorkPackageAssignment,
   WorkPackageAssignmentStatus,
@@ -64,6 +69,8 @@ import WorkPackageAssignmentsModal, {
   formatAssignmentStatusLabel,
   resolveAssignmentMemberDisplay,
   type AssignmentView,
+  type TeamAssignmentOption,
+  type TeamAssignmentView,
 } from "./WorkPackageAssignmentsModal";
 import WorkPackageEditorModal, {
   formatWorkPackageStatusLabel,
@@ -142,6 +149,10 @@ function planItemCountLabel(count: number): string {
   return `${count} plan item${count === 1 ? "" : "s"}`;
 }
 
+function toTeamAssignmentView(item: TeamWorkPackageAssignment): TeamAssignmentView {
+  return { id: item.id, workPackageId: item.workPackageId, teamId: item.teamId, status: item.status };
+}
+
 export default function WorkPackagesSection({
   mode,
   projectId,
@@ -153,6 +164,8 @@ export default function WorkPackagesSection({
 }: Props) {
   const [items, setItems] = useState<WorkPackageView[]>([]);
   const [assignments, setAssignments] = useState<AssignmentView[]>([]);
+  const [teamAssignments, setTeamAssignments] = useState<TeamAssignmentView[]>([]);
+  const [assignmentTeams, setAssignmentTeams] = useState<TeamAssignmentOption[]>([]);
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [presentationContext, setPresentationContext] =
     useState<MemberPresentationContext>();
@@ -193,6 +206,8 @@ export default function WorkPackagesSection({
         if (!ownerUid?.trim()) {
           setItems([]);
           setAssignments([]);
+          setTeamAssignments([]);
+          setAssignmentTeams([]);
           setMembers([]);
           setError("unavailable");
           return;
@@ -235,6 +250,35 @@ export default function WorkPackagesSection({
         setItems(localItems.map(toViewFromLocal));
         setAssignments(localAssignments.map(toAssignmentView));
         setMembers(mergedMembers);
+        if (remoteProjectId) {
+          try {
+            const [remoteTeams, teamAssignmentsFromCloud] = await Promise.all([
+              listTeams(remoteProjectId),
+              listTeamWorkPackageAssignments(remoteProjectId),
+            ]);
+            const options = await Promise.all(remoteTeams.filter((team) => team.status === "active").map(async (team) => ({
+              team,
+              memberCount: (await listTeamMembers(remoteProjectId, team.id)).filter((membership) => membership.status === "active").length,
+            })));
+            setAssignmentTeams(options);
+            const remoteToLocal = new Map<string, string>();
+            if (ownerUid) {
+              for (const localItem of localItems) {
+                const remoteId = await getRemoteWorkPackageId(ownerUid, projectId, localItem.id);
+                if (remoteId) remoteToLocal.set(remoteId, localItem.id);
+              }
+            }
+            setTeamAssignments(teamAssignmentsFromCloud
+              .filter((assignment) => remoteToLocal.has(assignment.workPackageId))
+              .map((assignment) => ({ ...toTeamAssignmentView(assignment), workPackageId: remoteToLocal.get(assignment.workPackageId)! })));
+          } catch {
+            setAssignmentTeams([]);
+            setTeamAssignments([]);
+          }
+        } else {
+          setAssignmentTeams([]);
+          setTeamAssignments([]);
+        }
         setPresentationContext(
           await fetchMemberPresentationContext({
             members: mergedMembers,
@@ -252,6 +296,20 @@ export default function WorkPackagesSection({
 
       setItems(remoteItems.map(toViewFromRemote));
       setAssignments(remoteAssignments.map(toAssignmentView));
+      try {
+        const [remoteTeams, teamAssignmentsFromCloud] = await Promise.all([
+          listTeams(projectId), listTeamWorkPackageAssignments(projectId),
+        ]);
+        const options = await Promise.all(remoteTeams.filter((team) => team.status === "active").map(async (team) => ({
+          team,
+          memberCount: (await listTeamMembers(projectId, team.id)).filter((membership) => membership.status === "active").length,
+        })));
+        setAssignmentTeams(options);
+        setTeamAssignments(teamAssignmentsFromCloud.map(toTeamAssignmentView));
+      } catch {
+        setAssignmentTeams([]);
+        setTeamAssignments([]);
+      }
       setMembers([]);
       setPresentationContext(
         await fetchMemberPresentationContext({
@@ -264,6 +322,8 @@ export default function WorkPackagesSection({
     } catch (loadError) {
       setItems([]);
       setAssignments([]);
+      setTeamAssignments([]);
+      setAssignmentTeams([]);
       setMembers([]);
 
       if (
@@ -601,6 +661,38 @@ export default function WorkPackagesSection({
     }
   };
 
+  const handleAssignTeam = async (teamId: string) => {
+    if (!canMutate || assignmentSaving || mode !== "local" || !ownerUid?.trim() || !assignmentTarget) return;
+    setAssignmentSaving(true);
+    try {
+      const remoteProjectId = await getRemoteProjectId(ownerUid, projectId);
+      if (!remoteProjectId) throw new Error("Connect this project to cloud before assigning a Team.");
+      const currentMemberIds = (assignmentsByWorkPackage.get(assignmentTarget.id) ?? [])
+        .filter((item) => item.status !== "cancelled").map((item) => item.projectMemberId);
+      await publishLocalWorkPackageToCloud(assignmentTarget, currentMemberIds);
+      const remoteWorkPackageId = await getRemoteWorkPackageId(ownerUid, projectId, assignmentTarget.id);
+      if (!remoteWorkPackageId) throw new Error("Work Package is not available in cloud yet.");
+      await assignRemoteTeam(remoteProjectId, remoteWorkPackageId, teamId);
+      await reload();
+    } catch (error) {
+      Alert.alert("Unable to assign Team", error instanceof Error ? error.message : "Team assignment could not be saved.");
+    } finally { setAssignmentSaving(false); }
+  };
+
+  const handleRemoveTeam = async (teamId: string) => {
+    if (!canMutate || assignmentSaving || mode !== "local" || !ownerUid?.trim() || !assignmentTarget) return;
+    setAssignmentSaving(true);
+    try {
+      const remoteProjectId = await getRemoteProjectId(ownerUid, projectId);
+      const remoteWorkPackageId = await getRemoteWorkPackageId(ownerUid, projectId, assignmentTarget.id);
+      if (!remoteProjectId || !remoteWorkPackageId) throw new Error("Team assignment is unavailable for this Work Package.");
+      await removeTeamFromWorkPackage(remoteProjectId, remoteWorkPackageId, teamId);
+      await reload();
+    } catch (error) {
+      Alert.alert("Unable to remove Team", error instanceof Error ? error.message : "Team assignment could not be removed.");
+    } finally { setAssignmentSaving(false); }
+  };
+
   const handleUpdateAssignmentStatus = async (
     assignmentId: string,
     status: WorkPackageAssignmentStatus,
@@ -728,6 +820,11 @@ export default function WorkPackagesSection({
     const packageAssignments = (
       assignmentsByWorkPackage.get(item.id) ?? []
     ).filter((assignment) => assignment.status !== "cancelled");
+    const packageTeamAssignments = teamAssignments.filter((assignment) => assignment.workPackageId === item.id && assignment.status !== "cancelled");
+    const visibleTeamAssignments = packageTeamAssignments.map((assignment) => ({
+      assignment,
+      team: assignmentTeams.find((option) => option.team.id === assignment.teamId)?.team,
+    })).filter((entry): entry is { assignment: TeamAssignmentView; team: Team } => !!entry.team);
 
     const ownAssignment =
       ownProjectMemberId != null
@@ -761,7 +858,7 @@ export default function WorkPackagesSection({
       );
     }
 
-    if (packageAssignments.length === 0) {
+    if (packageAssignments.length === 0 && visibleTeamAssignments.length === 0) {
       return (
         <Pressable
           onPress={() => openAssignments(item)}
@@ -781,7 +878,7 @@ export default function WorkPackagesSection({
       );
     }
 
-    if (packageAssignments.length > 2) {
+    if (packageAssignments.length + visibleTeamAssignments.length > 2) {
       return (
         <Pressable
           onPress={() => openAssignments(item)}
@@ -791,7 +888,7 @@ export default function WorkPackagesSection({
         >
           <Text style={styles.assignmentSummaryLabel}>Assigned</Text>
           <Text style={styles.assignmentSummaryMeta}>
-            {packageAssignments.length} assigned
+            {packageAssignments.length + visibleTeamAssignments.length} assigned
           </Text>
         </Pressable>
       );
@@ -826,6 +923,13 @@ export default function WorkPackagesSection({
             </View>
           );
         })}
+        {visibleTeamAssignments.map(({ assignment, team }) => (
+          <View key={assignment.id} style={styles.assignmentRow}>
+            <View style={styles.teamMiniIcon}><Text style={styles.teamMiniIconText}>T</Text></View>
+            <Text style={styles.assignmentRole} numberOfLines={1}>{team.name}</Text>
+            <Text style={styles.assignmentStatus}>Team</Text>
+          </View>
+        ))}
       </Pressable>
     );
   };
@@ -1018,6 +1122,8 @@ export default function WorkPackagesSection({
           assignments={(
             assignmentsByWorkPackage.get(assignmentTarget.id) ?? []
           ).filter((assignment) => assignment.status !== "cancelled")}
+          teamAssignments={teamAssignments.filter((assignment) => assignment.workPackageId === assignmentTarget.id && assignment.status !== "cancelled")}
+          teams={assignmentTeams}
           members={members}
           canMutate={canMutate && mode === "local"}
           noAssignableMembersAvailable={
@@ -1032,6 +1138,8 @@ export default function WorkPackagesSection({
           onAssign={(projectMemberId) => {
             void handleAssign(projectMemberId);
           }}
+          onAssignTeam={(teamId) => { void handleAssignTeam(teamId); }}
+          onRemoveTeam={(teamId) => { void handleRemoveTeam(teamId); }}
           onUpdateStatus={(assignmentId, status) => {
             void handleUpdateAssignmentStatus(assignmentId, status);
           }}
@@ -1256,6 +1364,8 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.brand.blue,
   },
+  teamMiniIcon: { width: 24, height: 24, borderRadius: 7, backgroundColor: "rgba(1, 33, 105, 0.08)", alignItems: "center", justifyContent: "center" },
+  teamMiniIconText: { ...typography.metadata, color: colors.brand.navy, fontWeight: "700" },
   cardActions: {
     marginTop: 12,
     flexDirection: "row",

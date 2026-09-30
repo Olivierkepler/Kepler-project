@@ -371,6 +371,9 @@ export type RemoteProjectMember = {
   invitedBy: string;
   createdAt: string;
   updatedAt: string;
+  displayName?: string | null;
+  email?: string | null;
+  avatarUrl?: string | null;
 };
 
 const PROJECT_MEMBER_STATUSES = ["invited", "active", "removed"] as const;
@@ -395,7 +398,16 @@ function isRemoteProjectMember(value: unknown): value is RemoteProjectMember {
     (PROJECT_MEMBER_STATUSES as readonly string[]).includes(record.status) &&
     typeof record.invitedBy === "string" &&
     typeof record.createdAt === "string" &&
-    typeof record.updatedAt === "string"
+    typeof record.updatedAt === "string" &&
+    (record.displayName === undefined ||
+      record.displayName === null ||
+      typeof record.displayName === "string") &&
+    (record.email === undefined ||
+      record.email === null ||
+      typeof record.email === "string") &&
+    (record.avatarUrl === undefined ||
+      record.avatarUrl === null ||
+      typeof record.avatarUrl === "string")
   );
 }
 
@@ -449,6 +461,15 @@ export async function getRemoteProjectMembers(
     invitedBy: member.invitedBy.trim(),
     createdAt: member.createdAt.trim(),
     updatedAt: member.updatedAt.trim(),
+    ...(member.displayName !== undefined
+      ? { displayName: member.displayName }
+      : {}),
+    ...(member.email !== undefined
+      ? { email: member.email }
+      : {}),
+    ...(member.avatarUrl !== undefined
+      ? { avatarUrl: member.avatarUrl }
+      : {}),
   }));
 }
 

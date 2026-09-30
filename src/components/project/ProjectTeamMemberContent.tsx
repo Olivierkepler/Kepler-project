@@ -10,6 +10,7 @@ import { useFocusEffect } from "@react-navigation/native";
 
 import { useAuth } from "../../auth/AuthProvider";
 import { ensureDirectConversation } from "../../services/api/conversations";
+import { getRemoteProjectMembers } from "../../services/api/projects";
 import { resolveProjectCollaborationContext } from "../../services/collaboration/projectCollaborationContext";
 import { getRemoteProjectId } from "../../store/projectCloudMappings";
 import { getDeltasForProject } from "../../store/deltas";
@@ -85,6 +86,7 @@ export default function ProjectTeamMemberContent({
   const [member, setMember] = useState<ProjectMember | null | undefined>(
     undefined,
   );
+  const [memberIsLocal, setMemberIsLocal] = useState<boolean | null>(null);
   const [remoteProjectId, setRemoteProjectId] = useState<string | null>(null);
   const [openingMessage, setOpeningMessage] = useState(false);
   const [messageError, setMessageError] = useState<string | null>(null);
@@ -149,20 +151,35 @@ export default function ProjectTeamMemberContent({
           return;
         }
 
-        const foundMember =
+        let foundMember: ProjectMember | null =
           memberItems.find((item) => item.id === projectMemberId) ?? null;
+        let isLocalMember = !!foundMember;
+
+        const mappedRemoteId = await getRemoteProjectId(
+          storageOwnerUid,
+          projectId,
+        );
+        if (!active) return;
+        if (!foundMember && mappedRemoteId) {
+          try {
+            foundMember =
+              (await getRemoteProjectMembers(mappedRemoteId)).find(
+                (item) => item.id === projectMemberId,
+              ) ?? null;
+            isLocalMember = false;
+          } catch {
+            // Existing local members continue to work when cloud reads fail.
+          }
+        }
 
         setMember(foundMember);
+        setMemberIsLocal(isLocalMember);
         setWorkPackages(packageItems);
         setAssignments(assignmentItems);
         setPlanItems(planItemItems);
         setMeasurements(measurementItems);
         setDeltas(deltaItems);
 
-        const mappedRemoteId = await getRemoteProjectId(
-          storageOwnerUid,
-          projectId,
-        );
         if (active) {
           setRemoteProjectId(mappedRemoteId ?? null);
         }
@@ -318,6 +335,8 @@ export default function ProjectTeamMemberContent({
         ) : null}
       </View>
 
+      {memberIsLocal ? (
+        <>
       <Text style={styles.sectionEyebrow}>ASSIGNED WORK</Text>
 
       {detail.summary.hasAssignedWork ? (
@@ -389,6 +408,8 @@ export default function ProjectTeamMemberContent({
           </View>
         );
       })}
+        </>
+      ) : null}
     </ScrollView>
   );
 }

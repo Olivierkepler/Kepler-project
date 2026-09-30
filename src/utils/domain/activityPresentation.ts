@@ -24,6 +24,10 @@ export function formatCloudActivityTitle(type: string): string {
   switch (type) {
     case "assignment_created":
       return "Assignment created";
+    case "team_assignment_created":
+      return "Team assigned";
+    case "team_assignment_removed":
+      return "Team assignment removed";
     case "assignment_accepted":
       return "Assignment accepted";
     case "assignment_started":
@@ -74,8 +78,18 @@ export function formatCloudActivitySubtitle(
   resolved?: {
     workPackageName?: string;
     planItemLabel?: string;
+    assignmentTargetName?: string;
   },
 ): string | null {
+  if (event.type === "assignment_created") {
+    return `Assigned to ${resolved?.assignmentTargetName?.trim() || "Project member"} · ${resolved?.workPackageName?.trim() || "Work package"}`;
+  }
+  if (event.type === "team_assignment_created") {
+    return `Assigned to ${resolved?.assignmentTargetName?.trim() || "Team"} · ${resolved?.workPackageName?.trim() || "Work package"}`;
+  }
+  if (event.type === "team_assignment_removed") {
+    return `Removed ${resolved?.assignmentTargetName?.trim() || "Team"} from ${resolved?.workPackageName?.trim() || "Work package"}`;
+  }
   if (resolved?.workPackageName?.trim()) {
     return resolved.workPackageName.trim();
   }
@@ -104,6 +118,9 @@ export function formatCloudActivitySubtitle(
     case "assignment_reopened":
     case "assignment_cancelled":
       return "Work package assignment";
+    case "team_assignment_created":
+    case "team_assignment_removed":
+      return "Work package team responsibility";
     case "invitation_created":
     case "invitation_accepted":
       return "Project team";

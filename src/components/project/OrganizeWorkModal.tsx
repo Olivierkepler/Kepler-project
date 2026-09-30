@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -24,6 +25,7 @@ import {
   addWorkPackageIfAbsent,
   createLocalWorkPackageId,
   getWorkPackagesForProject,
+  removeWorkPackage,
 } from "../../store/workPackages";
 import { getProjectMembersForProject } from "../../store/projectMembers";
 import { getRemoteProjectId } from "../../store/projectCloudMappings";
@@ -36,6 +38,8 @@ import type { PlanItem } from "../../types/plan";
 import type { ProjectMember } from "../../types/projectMember";
 import type { WorkPackage } from "../../types/workPackage";
 import type { WorkPackageAssignment } from "../../types/workPackageAssignment";
+import { getPlanItemImageDisplaySource } from "../../utils/domain/planItemImage";
+import WorkPackageImage from "./WorkPackageImage";
 import {
   buildPlanItemAssignmentMaps,
   persistWorkPackagePlanItems,
@@ -65,7 +69,19 @@ function mergeAssignableMembers(
   return [...byId.values()];
 }
 
-type ViewMode = "list" | "create" | "edit" | "success";
+type ViewMode =
+  | "list"
+  | "create"
+  | "edit"
+  | "success"
+  | "selectItems"
+  | "organizeTarget";
+type AssignmentChange =
+  | { kind: "unchanged" }
+  | { kind: "unassigned" }
+  | { kind: "member"; projectMemberId: string };
+
+const DRAFT_WORK_PACKAGE_ID = "__organize_work_draft__";
 
 type Props = {
   visible: boolean;
@@ -73,6 +89,8 @@ type Props = {
   ownerUid: string;
   canMutate: boolean;
   planItems: PlanItem[];
+  /** Opt-in Unassigned → select items → choose package flow. */
+  selectionMode?: "default" | "unassignedItemsFirst";
   initialWorkPackageId?: string | null;
   highlightPlanItemId?: string | null;
   onClose: () => void;
@@ -87,12 +105,98 @@ function formatQuantity(value: number, unit: string): string {
   return `${value.toFixed(2)} ${unit.toUpperCase()}`;
 }
 
+function getPlanItemInitials(label: string): string {
+  const words = label.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "PL";
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return `${words[0][0]}${words[1][0]}`.toUpperCase();
+}
+
+function formatSelectionQuantity(value: number, unit: string): string {
+  return `${value.toFixed(2)} ${unit.toUpperCase()}`;
+}
+
+function PlanItemSelectionRow({
+  item,
+  selected,
+  onPress,
+}: {
+  item: PlanItem;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  const [failedImageUris, setFailedImageUris] = useState<string[]>([]);
+  const imageSource = getPlanItemImageDisplaySource(item, failedImageUris);
+  const originLabel =
+    item.origin === "plan_import"
+      ? "Imported"
+      : item.origin === "manual"
+        ? "Manual"
+        : null;
+
+  useEffect(() => {
+    setFailedImageUris([]);
+  }, [item.imageUri, item.imageUrl]);
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="checkbox"
+      accessibilityLabel={`${item.label}, ${formatSelectionQuantity(item.plannedValue, item.unit)}`}
+      accessibilityState={{ checked: selected }}
+      style={({ pressed }) => [
+        styles.selectionItemRow,
+        selected && styles.selectionItemRowSelected,
+        pressed && styles.selectionItemRowPressed,
+      ]}
+    >
+      <Ionicons
+        name={selected ? "checkbox" : "square-outline"}
+        size={22}
+        color={selected ? "#3B6FCF" : "#C5CBD3"}
+      />
+      <View style={styles.selectionItemAvatar}>
+        {imageSource ? (
+          <Image
+            key={imageSource.uri}
+            source={{ uri: imageSource.uri }}
+            resizeMode="cover"
+            style={styles.selectionItemAvatarImage}
+            onError={() =>
+              setFailedImageUris((current) =>
+                current.includes(imageSource.uri)
+                  ? current
+                  : [...current, imageSource.uri],
+              )
+            }
+            accessible={false}
+          />
+        ) : (
+          <Text style={styles.selectionItemAvatarText}>
+            {getPlanItemInitials(item.label)}
+          </Text>
+        )}
+      </View>
+      <View style={styles.selectionItemText}>
+        <Text style={styles.selectionItemName} numberOfLines={2}>
+          {item.label}
+        </Text>
+        <Text style={styles.selectionItemMeta} numberOfLines={1}>
+          {formatSelectionQuantity(item.plannedValue, item.unit)}
+          {originLabel ? ` · ${originLabel}` : ""}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
 export default function OrganizeWorkModal({
   visible,
   projectId,
   ownerUid,
   canMutate,
   planItems,
+  selectionMode = "default",
   initialWorkPackageId = null,
   highlightPlanItemId = null,
   onClose,
@@ -117,6 +221,11 @@ export default function OrganizeWorkModal({
     null,
   );
   const [createName, setCreateName] = useState("");
+  const [draftWorkPackageName, setDraftWorkPackageName] = useState("");
+  const [selectionSearch, setSelectionSearch] = useState("");
+  const [assignmentChange, setAssignmentChange] =
+    useState<AssignmentChange>({ kind: "unchanged" });
+  const [assignmentPickerOpen, setAssignmentPickerOpen] = useState(false);
 
   const [successSummary, setSuccessSummary] = useState<{
     workPackageId: string;
@@ -131,6 +240,14 @@ export default function OrganizeWorkModal({
         .sort((a, b) => a.label.localeCompare(b.label)),
     [planItems],
   );
+
+  const filteredSelectionItems = useMemo(() => {
+    const query = selectionSearch.trim().toLocaleLowerCase();
+    if (!query) return sortedPlanItems;
+    return sortedPlanItems.filter((item) =>
+      item.label.toLocaleLowerCase().includes(query),
+    );
+  }, [selectionSearch, sortedPlanItems]);
 
   const planItemIds = useMemo(
     () => sortedPlanItems.map((item) => item.id),
@@ -170,6 +287,14 @@ export default function OrganizeWorkModal({
     () =>
       workPackages.find((item) => item.id === selectedWorkPackageId) ?? null,
     [selectedWorkPackageId, workPackages],
+  );
+
+  const activeAssignmentsForSelectedPackage = useMemo(
+    () =>
+      (assignmentsByWorkPackage.get(selectedWorkPackageId ?? "") ?? []).filter(
+        (item) => item.status !== "cancelled",
+      ),
+    [assignmentsByWorkPackage, selectedWorkPackageId],
   );
 
   const reload = useCallback(async () => {
@@ -242,7 +367,21 @@ export default function OrganizeWorkModal({
       setSelectedPlanItemIds([]);
       setSelectedMemberId(null);
       setCreateName("");
+      setDraftWorkPackageName("");
+      setSelectionSearch("");
+      setAssignmentChange({ kind: "unchanged" });
+      setAssignmentPickerOpen(false);
       setSuccessSummary(null);
+      return;
+    }
+
+    if (selectionMode === "unassignedItemsFirst") {
+      setSelectedWorkPackageId(null);
+      setSelectedPlanItemIds([]);
+      setDraftWorkPackageName("");
+      setSelectionSearch("");
+      setAssignmentChange({ kind: "unchanged" });
+      setView("selectItems");
       return;
     }
 
@@ -252,7 +391,7 @@ export default function OrganizeWorkModal({
     } else {
       setView("list");
     }
-  }, [initialWorkPackageId, visible]);
+  }, [initialWorkPackageId, selectionMode, visible]);
 
   useEffect(() => {
     if (!visible || view !== "edit" || !selectedWorkPackage) {
@@ -310,6 +449,15 @@ export default function OrganizeWorkModal({
       return;
     }
 
+    if (selectionMode === "unassignedItemsFirst") {
+      setDraftWorkPackageName(name);
+      setSelectedWorkPackageId(DRAFT_WORK_PACKAGE_ID);
+      setAssignmentChange({ kind: "unchanged" });
+      setCreateName("");
+      setView("organizeTarget");
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -346,7 +494,179 @@ export default function OrganizeWorkModal({
     }
   };
 
+  const handleApplyUnassignedSelection = async () => {
+    if (
+      !canMutate ||
+      saving ||
+      selectedPlanItemIds.length === 0 ||
+      !selectedWorkPackageId
+    ) {
+      return;
+    }
+
+    const scopedSelectedIds = [...new Set(selectedPlanItemIds)].filter((id) =>
+      planItemIds.includes(id),
+    );
+    if (scopedSelectedIds.length === 0) {
+      Alert.alert("Select plan items", "Choose at least one unassigned Plan Item.");
+      return;
+    }
+
+    setSaving(true);
+    let createdPackage: WorkPackage | null = null;
+    let membershipSaved = false;
+
+    try {
+      let target = selectedWorkPackage;
+      let packagesForPersistence = workPackages;
+
+      if (selectedWorkPackageId === DRAFT_WORK_PACKAGE_ID) {
+        const name = draftWorkPackageName.trim();
+        if (!name) {
+          throw new Error("Enter a work package name.");
+        }
+
+        const nowIso = new Date().toISOString();
+        createdPackage = {
+          id: createLocalWorkPackageId(),
+          projectId,
+          name,
+          status: "draft",
+          planItemIds: [],
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        const created = await addWorkPackageIfAbsent(ownerUid, createdPackage);
+        if (!created) {
+          throw new Error("Unable to create work package.");
+        }
+        target = createdPackage;
+        packagesForPersistence = [...workPackages, createdPackage];
+      }
+
+      if (!target) {
+        throw new Error("Choose a work package.");
+      }
+
+      const nextPlanItemIds = [
+        ...new Set([...target.planItemIds, ...scopedSelectedIds]),
+      ];
+
+      await persistWorkPackagePlanItems(
+        ownerUid,
+        target.id,
+        nextPlanItemIds,
+        packagesForPersistence,
+      );
+      membershipSaved = true;
+
+      const currentAssignments =
+        assignmentsByWorkPackage.get(target.id) ?? [];
+      if (assignmentChange.kind === "unassigned") {
+        for (const assignment of currentAssignments) {
+          if (assignment.status !== "cancelled") {
+            await removeWorkPackageAssignment(ownerUid, assignment.id);
+          }
+        }
+      } else if (assignmentChange.kind === "member") {
+        const chosenMemberId = assignmentChange.projectMemberId;
+        for (const assignment of currentAssignments) {
+          if (
+            assignment.status !== "cancelled" &&
+            assignment.projectMemberId !== chosenMemberId
+          ) {
+            await removeWorkPackageAssignment(ownerUid, assignment.id);
+          }
+        }
+
+        const alreadyAssigned = currentAssignments.some(
+          (assignment) =>
+            assignment.status !== "cancelled" &&
+            assignment.projectMemberId === chosenMemberId,
+        );
+        if (!alreadyAssigned) {
+          const nowIso = new Date().toISOString();
+          const created = await addWorkPackageAssignmentIfAbsent(ownerUid, {
+            id: createLocalWorkPackageAssignmentId(),
+            projectId,
+            workPackageId: target.id,
+            projectMemberId: chosenMemberId,
+            status: "assigned",
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          });
+          if (!created) {
+            throw new Error("That member is already assigned to this work package.");
+          }
+        }
+      }
+
+      const remoteProjectId = await getRemoteProjectId(ownerUid, projectId);
+      const desiredMemberIds =
+        assignmentChange.kind === "unassigned"
+          ? []
+          : assignmentChange.kind === "member"
+            ? [assignmentChange.projectMemberId]
+            : currentAssignments
+                .filter((assignment) => assignment.status !== "cancelled")
+                .map((assignment) => assignment.projectMemberId);
+      const desiredCloudProjectMemberIds = remoteProjectId
+        ? desiredMemberIds.map((selectedMemberId) => {
+            const member = members.find((item) => item.id === selectedMemberId);
+            return resolveCloudProjectMemberId({
+              selectedMemberId,
+              remoteProjectId,
+              memberUserId: member?.userId ?? null,
+            });
+          })
+        : desiredMemberIds;
+
+      const publishResult = await publishWorkPackageToCloud({
+        ownerUid,
+        localProjectId: projectId,
+        localWorkPackage: {
+          id: target.id,
+          name: target.name,
+          description: target.description,
+          status: target.status,
+          planItemIds: nextPlanItemIds,
+        },
+        desiredCloudProjectMemberIds,
+      });
+
+      if (!publishResult.ok) {
+        Alert.alert(
+          "Saved locally",
+          `Cloud collaboration sync failed: ${publishResult.error}. Field members will not see this change until sync succeeds.`,
+        );
+      }
+
+      await reload();
+      onUpdated?.();
+      onClose();
+    } catch (applyError) {
+      if (createdPackage && !membershipSaved) {
+        // A draft package is created only at Apply time. If its local
+        // membership write fails, remove the empty package as well.
+        await removeWorkPackage(ownerUid, createdPackage.id).catch(() => false);
+      }
+      Alert.alert(
+        "Unable to organize work",
+        applyError instanceof Error
+          ? applyError.message
+          : "Unable to organize the selected Plan Items.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSave = async () => {
+    if (selectionMode === "unassignedItemsFirst") {
+      await handleApplyUnassignedSelection();
+      return;
+    }
+
     if (!canMutate || saving || !selectedWorkPackage) {
       return;
     }
@@ -587,7 +907,10 @@ export default function OrganizeWorkModal({
 
   const renderCreate = () => (
     <>
-      {renderHeader("Create work package", () => setView("list"))}
+      {renderHeader(
+        "Create work package",
+        () => setView(selectionMode === "unassignedItemsFirst" ? "organizeTarget" : "list"),
+      )}
 
       <View style={styles.body}>
         <Text style={styles.fieldLabel}>Work package name</Text>
@@ -624,6 +947,262 @@ export default function OrganizeWorkModal({
       </View>
     </>
   );
+
+  const renderSelectItems = () => (
+    <>
+      {renderHeader("Organize Work")}
+      <ScrollView
+        style={styles.body}
+        contentContainerStyle={styles.selectionBodyContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={styles.stepSubtitle}>
+          Select plan items to group into a work package and/or assign to a team member.
+        </Text>
+        <View style={styles.searchField}>
+          <Ionicons name="search-outline" size={17} color="#98A2B3" />
+          <TextInput
+            value={selectionSearch}
+            onChangeText={setSelectionSearch}
+            placeholder="Search plan items..."
+            placeholderTextColor="#98A2B3"
+            style={styles.searchInput}
+            returnKeyType="search"
+            accessibilityLabel="Search plan items"
+          />
+          {selectionSearch.length > 0 ? (
+            <Pressable onPress={() => setSelectionSearch("")} hitSlop={8} accessibilityLabel="Clear search">
+              <Ionicons name="close-circle" size={18} color="#98A2B3" />
+            </Pressable>
+          ) : null}
+        </View>
+        {filteredSelectionItems.length === 0 ? (
+          <View style={styles.selectionEmpty}>
+            <Text style={styles.emptyTitle}>
+              {sortedPlanItems.length === 0 ? "No unassigned plan items" : "No matching plan items"}
+            </Text>
+            {sortedPlanItems.length > 0 ? (
+              <Text style={styles.emptyBody}>Try another search.</Text>
+            ) : null}
+          </View>
+        ) : (
+          filteredSelectionItems.map((item) => (
+            <PlanItemSelectionRow
+              key={item.id}
+              item={item}
+              selected={selectedPlanItemIds.includes(item.id)}
+              onPress={() => togglePlanItem(item.id)}
+            />
+          ))
+        )}
+      </ScrollView>
+      <View style={[styles.stepFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+        <Text style={styles.selectionCount}>
+          {selectedPlanItemIds.length} selected
+        </Text>
+        <Pressable
+          onPress={() => setView("organizeTarget")}
+          disabled={selectedPlanItemIds.length === 0}
+          accessibilityRole="button"
+          accessibilityLabel="Continue"
+          accessibilityState={{ disabled: selectedPlanItemIds.length === 0 }}
+          style={({ pressed }) => [
+            styles.saveButton,
+            selectedPlanItemIds.length === 0 && styles.saveButtonDisabled,
+            pressed && selectedPlanItemIds.length > 0 && styles.saveButtonPressed,
+          ]}
+        >
+          <Text style={styles.saveButtonText}>Continue</Text>
+        </Pressable>
+      </View>
+    </>
+  );
+
+  const renderOrganizeTarget = () => {
+    const assignmentLabel =
+      assignmentChange.kind === "member"
+        ? resolveAssignmentMemberDisplay(
+            projectId,
+            assignmentChange.projectMemberId,
+            members,
+            presentationContext,
+          ).label
+        : assignmentChange.kind === "unassigned"
+          ? "Unassigned"
+          : activeAssignmentsForSelectedPackage.length > 0
+            ? "Keep current assignments"
+            : "Unassigned";
+
+    return (
+      <>
+        {renderHeader("Organize Selected Items", () => {
+          setAssignmentPickerOpen(false);
+          setView("selectItems");
+        })}
+        <ScrollView
+          style={styles.body}
+          contentContainerStyle={styles.targetBodyContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.stepSubtitle}>
+            Choose a work package and optionally assign a team member.
+          </Text>
+          <Text style={styles.sectionLabel}>WORK PACKAGE</Text>
+          {loading ? (
+            <ActivityIndicator color="#475467" style={styles.loader} />
+          ) : null}
+          {selectedWorkPackageId === DRAFT_WORK_PACKAGE_ID ? (
+            <View style={[styles.targetPackageRow, styles.targetPackageRowSelected]}>
+              <Ionicons name="radio-button-on" size={20} color="#3B6FCF" />
+              <WorkPackageImage size={34} radius={9} />
+              <Text style={styles.targetPackageName} numberOfLines={2}>
+                {draftWorkPackageName}
+              </Text>
+              <Text style={styles.draftTag}>New</Text>
+            </View>
+          ) : null}
+          {workPackages.map((item) => {
+              const selected = selectedWorkPackageId === item.id;
+              return (
+                <Pressable
+                  key={item.id}
+                  onPress={() => {
+                    setSelectedWorkPackageId(item.id);
+                    setAssignmentChange({ kind: "unchanged" });
+                    setAssignmentPickerOpen(false);
+                  }}
+                  accessibilityRole="radio"
+                  accessibilityLabel={item.name}
+                  accessibilityState={{ selected }}
+                  style={[styles.targetPackageRow, selected && styles.targetPackageRowSelected]}
+                >
+                  <Ionicons
+                    name={selected ? "radio-button-on" : "radio-button-off"}
+                    size={20}
+                    color={selected ? "#3B6FCF" : "#C5CBD3"}
+                  />
+                  <WorkPackageImage uri={item.imageUrl} size={34} radius={9} />
+                  <Text style={styles.targetPackageName} numberOfLines={2}>{item.name}</Text>
+                </Pressable>
+              );
+            })}
+          {!loading && workPackages.length === 0 && selectedWorkPackageId !== DRAFT_WORK_PACKAGE_ID ? (
+            <Text style={styles.helperText}>Create a work package to continue.</Text>
+          ) : null}
+          <Pressable
+            onPress={() => {
+              setCreateName(draftWorkPackageName);
+              setView("create");
+            }}
+            disabled={!canMutate || saving}
+            style={styles.createPackageAction}
+            accessibilityRole="button"
+            accessibilityLabel="Create new work package"
+          >
+            <Ionicons name="add-circle-outline" size={19} color="#1D3A6B" />
+            <Text style={styles.createPackageActionText}>Create new work package</Text>
+          </Pressable>
+
+          <Text style={[styles.sectionLabel, styles.assignSectionLabel]}>ASSIGN TO</Text>
+          <Pressable
+            onPress={() => setAssignmentPickerOpen((current) => !current)}
+            style={styles.assignmentPicker}
+            accessibilityRole="button"
+            accessibilityLabel={`Assign to ${assignmentLabel}`}
+            accessibilityState={{ expanded: assignmentPickerOpen }}
+          >
+            <Text style={styles.assignmentPickerText}>{assignmentLabel}</Text>
+            <Ionicons name={assignmentPickerOpen ? "chevron-up" : "chevron-down"} size={18} color="#667085" />
+          </Pressable>
+          {assignmentChange.kind === "unchanged" && activeAssignmentsForSelectedPackage.length > 0 ? (
+            <Text style={styles.assignmentSafetyNote}>
+              Existing assignments will be kept unless you choose a different option.
+            </Text>
+          ) : null}
+          {assignmentPickerOpen ? (
+            <View style={styles.assignmentOptions}>
+              {activeAssignmentsForSelectedPackage.length > 0 ? (
+                <Pressable
+                  onPress={() => {
+                    setAssignmentChange({ kind: "unchanged" });
+                    setAssignmentPickerOpen(false);
+                  }}
+                  style={styles.assignmentOption}
+                >
+                  <Text style={styles.assignmentOptionText}>Keep current assignments</Text>
+                  {assignmentChange.kind === "unchanged" ? <Ionicons name="checkmark" size={18} color="#1D3A6B" /> : null}
+                </Pressable>
+              ) : null}
+              <Pressable
+                onPress={() => {
+                  setAssignmentChange({ kind: "unassigned" });
+                  setAssignmentPickerOpen(false);
+                }}
+                style={styles.assignmentOption}
+              >
+                <Text style={styles.assignmentOptionText}>Unassigned</Text>
+                {assignmentChange.kind === "unassigned" ? <Ionicons name="checkmark" size={18} color="#1D3A6B" /> : null}
+              </Pressable>
+              {activeMembers.map((member) => {
+                const selected = assignmentChange.kind === "member" && assignmentChange.projectMemberId === member.id;
+                const display = resolveAssignmentMemberDisplay(projectId, member.id, members, presentationContext);
+                return (
+                  <Pressable
+                    key={member.id}
+                    onPress={() => {
+                      setAssignmentChange({ kind: "member", projectMemberId: member.id });
+                      setAssignmentPickerOpen(false);
+                    }}
+                    style={styles.assignmentOption}
+                  >
+                    <View style={styles.assignmentMemberOption}>
+                      <View style={styles.memberAvatar}><Text style={styles.memberAvatarText}>{display.initial}</Text></View>
+                      <View>
+                        <Text style={styles.assignmentOptionText}>{display.label}</Text>
+                        <Text style={styles.memberRole}>{display.roleLabel}</Text>
+                      </View>
+                    </View>
+                    {selected ? <Ionicons name="checkmark" size={18} color="#1D3A6B" /> : null}
+                  </Pressable>
+                );
+              })}
+              {activeMembers.length === 0 ? (
+                <Text style={styles.helperText}>No active project members are available.</Text>
+              ) : null}
+            </View>
+          ) : null}
+          {assignmentChange.kind === "member" && activeAssignmentsForSelectedPackage.length > 0 ? (
+            <Text style={styles.assignmentSafetyNote}>
+              Choosing a member replaces the work package’s current assignments.
+            </Text>
+          ) : null}
+          <View style={styles.selectedItemsSummary}>
+            <Ionicons name="checkmark-circle-outline" size={18} color="#667085" />
+            <Text style={styles.selectedItemsSummaryText}>
+              {selectedPlanItemIds.length} {selectedPlanItemIds.length === 1 ? "item" : "items"} selected
+            </Text>
+          </View>
+        </ScrollView>
+        <View style={[styles.stepFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+          <Pressable
+            onPress={() => { void handleApplyUnassignedSelection(); }}
+            disabled={!canMutate || saving || selectedPlanItemIds.length === 0 || !selectedWorkPackageId}
+            accessibilityRole="button"
+            accessibilityLabel="Apply changes"
+            accessibilityState={{ disabled: !canMutate || saving || selectedPlanItemIds.length === 0 || !selectedWorkPackageId, busy: saving }}
+            style={({ pressed }) => [
+              styles.saveButton,
+              (!canMutate || saving || selectedPlanItemIds.length === 0 || !selectedWorkPackageId) && styles.saveButtonDisabled,
+              pressed && canMutate && !saving && styles.saveButtonPressed,
+            ]}
+          >
+            {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.saveButtonText}>Apply Changes</Text>}
+          </Pressable>
+        </View>
+      </>
+    );
+  };
 
   const renderEdit = () => {
     if (!selectedWorkPackage) {
@@ -808,7 +1387,11 @@ export default function OrganizeWorkModal({
           { paddingTop: Math.max(insets.top, 12) },
         ]}
       >
-        {view === "list"
+        {view === "selectItems"
+          ? renderSelectItems()
+          : view === "organizeTarget"
+            ? renderOrganizeTarget()
+            : view === "list"
           ? renderList()
           : view === "create"
             ? renderCreate()
@@ -861,6 +1444,203 @@ const styles = StyleSheet.create({
   bodyContent: {
     padding: 20,
     paddingBottom: 32,
+  },
+  selectionBodyContent: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 18,
+  },
+  targetBodyContent: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 18,
+  },
+  stepSubtitle: {
+    ...typography.body,
+    color: "#667085",
+    lineHeight: 21,
+    marginBottom: 16,
+  },
+  searchField: {
+    height: 42,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: "#E4E7EC",
+    backgroundColor: "#F8FAFC",
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 12,
+  },
+  searchInput: {
+    ...typography.body,
+    flex: 1,
+    minWidth: 0,
+    color: "#101828",
+    paddingVertical: 0,
+  },
+  selectionItemRow: {
+    minHeight: 72,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#EAECF0",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  selectionItemRowSelected: {
+    backgroundColor: "#F8FAFC",
+  },
+  selectionItemRowPressed: {
+    opacity: 0.84,
+  },
+  selectionItemAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    overflow: "hidden",
+    backgroundColor: "#EEF2F6",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  selectionItemAvatarImage: {
+    width: "100%",
+    height: "100%",
+  },
+  selectionItemAvatarText: {
+    ...typography.caption,
+    color: "#344054",
+    fontWeight: "600",
+  },
+  selectionItemText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  selectionItemName: {
+    ...typography.bodyMedium,
+    color: "#101828",
+  },
+  selectionItemMeta: {
+    ...typography.caption,
+    color: "#667085",
+    marginTop: 3,
+  },
+  selectionEmpty: {
+    paddingVertical: 28,
+    alignItems: "center",
+  },
+  selectionCount: {
+    ...typography.caption,
+    color: "#667085",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  stepFooter: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#EAECF0",
+    backgroundColor: "#FFFFFF",
+  },
+  targetPackageRow: {
+    minHeight: 58,
+    borderWidth: 1,
+    borderColor: "#EAECF0",
+    borderRadius: 12,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 8,
+  },
+  targetPackageRowSelected: {
+    borderColor: "#BFD0EA",
+    backgroundColor: "#F5F8FD",
+  },
+  targetPackageName: {
+    ...typography.bodyMedium,
+    color: "#101828",
+    flex: 1,
+    minWidth: 0,
+  },
+  draftTag: {
+    ...typography.metadata,
+    color: "#667085",
+    backgroundColor: "#EEF2F6",
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
+  createPackageAction: {
+    minHeight: 42,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    paddingHorizontal: 3,
+  },
+  createPackageActionText: {
+    ...typography.bodyMedium,
+    color: "#1D3A6B",
+  },
+  assignSectionLabel: {
+    marginTop: 15,
+  },
+  assignmentPicker: {
+    minHeight: 46,
+    borderWidth: 1,
+    borderColor: "#D0D5DD",
+    borderRadius: 11,
+    paddingHorizontal: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  assignmentPickerText: {
+    ...typography.bodyMedium,
+    color: "#344054",
+  },
+  assignmentSafetyNote: {
+    ...typography.caption,
+    color: "#667085",
+    marginTop: 7,
+  },
+  assignmentOptions: {
+    borderWidth: 1,
+    borderColor: "#EAECF0",
+    borderRadius: 11,
+    marginTop: 6,
+    paddingHorizontal: 10,
+    backgroundColor: "#FFFFFF",
+  },
+  assignmentOption: {
+    minHeight: 48,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#EAECF0",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 6,
+  },
+  assignmentMemberOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  assignmentOptionText: {
+    ...typography.body,
+    color: "#344054",
+  },
+  selectedItemsSummary: {
+    marginTop: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+  selectedItemsSummaryText: {
+    ...typography.caption,
+    color: "#667085",
   },
   summaryEyebrow: {
     ...typography.metadata,

@@ -10,6 +10,8 @@ import type { ProjectMember } from "../../domain/projectMember.js";
 import type { WorkPackage } from "../../domain/workPackage.js";
 import type { WorkPackageAssignment } from "../../domain/workPackageAssignment.js";
 import type { WorkPackageAssignmentStatus } from "../../domain/workPackageAssignment.js";
+import type { TeamWorkPackageAssignment } from "../../domain/teamWorkPackageAssignment.js";
+import type { Team } from "../../domain/team.js";
 import { tryRecordActivityAndNotifications } from "./recordActivityEvent.js";
 import type { ActivityNotificationPolicyContext } from "./activityNotificationPolicy.js";
 
@@ -100,6 +102,36 @@ export async function projectAssignmentCreatedActivity(input: {
     projectOwnerUid,
     assignedMemberUid: member.userId,
   });
+}
+
+export async function projectTeamAssignmentActivity(input: {
+  assignment: TeamWorkPackageAssignment;
+  team: Team;
+  workPackage: WorkPackage;
+  actorUid: string;
+  projectOwnerUid: string;
+  action: "created" | "removed";
+}): Promise<void> {
+  const { assignment, team, workPackage } = input;
+  const sourceType = input.action === "created" ? "team_assignment_create" : "team_assignment_remove";
+  const type = input.action === "created" ? "team_assignment_created" : "team_assignment_removed";
+  const kind = input.action === "created" ? "team-assignment-create" : "team-assignment-remove";
+  const activity: ActivityEvent = {
+    id: buildActivityEventId({ kind, sourceId: assignment.id }),
+    projectId: assignment.projectId,
+    type,
+    actorType: "human",
+    actorUid: input.actorUid,
+    subjectType: "team_assignment",
+    subjectId: assignment.id,
+    sourceType,
+    sourceId: assignment.id,
+    related: { teamId: team.id, workPackageId: workPackage.id },
+    scopeWorkPackageIds: [workPackage.id],
+    scopePlanItemIds: [...workPackage.planItemIds],
+    createdAt: assignment.updatedAt,
+  };
+  await tryRecordActivityAndNotifications(activity, { projectOwnerUid: input.projectOwnerUid });
 }
 
 export async function projectAssignmentProgressActivity(input: {

@@ -12,7 +12,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { colors, typography } from "../../theme/colors";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import type { ProjectMember } from "../../types/projectMember";
+import type { Team } from "../../types/team";
 import type { WorkPackageAssignmentStatus } from "../../types/workPackageAssignment";
 import { formatAssignmentProgressStatusLabel } from "../../utils/assignmentProgress";
 import {
@@ -26,6 +28,8 @@ export type AssignmentView = {
   projectMemberId: string;
   status: WorkPackageAssignmentStatus;
 };
+export type TeamAssignmentView = { id: string; workPackageId: string; teamId: string; status: WorkPackageAssignmentStatus };
+export type TeamAssignmentOption = { team: Team; memberCount: number };
 
 type Props = {
   visible: boolean;
@@ -46,6 +50,10 @@ type Props = {
   onRemove: (assignmentId: string) => void;
   /** Presentation-only profile/email context for member labels. */
   presentationContext?: MemberPresentationContext;
+  teamAssignments?: TeamAssignmentView[];
+  teams?: TeamAssignmentOption[];
+  onAssignTeam?: (teamId: string) => void;
+  onRemoveTeam?: (teamId: string) => void;
 };
 
 const BLOCKING_STATUSES: readonly WorkPackageAssignmentStatus[] = [
@@ -118,6 +126,10 @@ export default function WorkPackageAssignmentsModal({
   onUpdateStatus,
   onRemove,
   presentationContext,
+  teamAssignments = [],
+  teams = [],
+  onAssignTeam,
+  onRemoveTeam,
 }: Props) {
   const insets = useSafeAreaInsets();
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -145,6 +157,8 @@ export default function WorkPackageAssignmentsModal({
       ),
     [members, assignedMemberIds],
   );
+  const activeTeamAssignments = teamAssignments.filter((item) => item.status !== "cancelled");
+  const assignedTeamIds = new Set(activeTeamAssignments.map((item) => item.teamId));
 
   const confirmRemove = (assignment: AssignmentView) => {
     const display = resolveAssignmentMemberDisplay(
@@ -211,7 +225,7 @@ export default function WorkPackageAssignmentsModal({
 
           <Text style={styles.sectionLabel}>ASSIGNED TEAM</Text>
 
-          {activeAssignments.length === 0 ? (
+          {activeAssignments.length === 0 && activeTeamAssignments.length === 0 ? (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>No one assigned yet</Text>
               <Text style={styles.emptyBody}>
@@ -220,6 +234,8 @@ export default function WorkPackageAssignmentsModal({
                   : "The project owner has not assigned anyone yet."}
               </Text>
             </View>
+          ) : activeAssignments.length === 0 ? (
+            <View style={styles.emptyCard}><Text style={styles.emptyTitle}>No individual members assigned</Text><Text style={styles.emptyBody}>Team responsibility is shown below.</Text></View>
           ) : (
             activeAssignments.map((assignment) => {
               const display = resolveAssignmentMemberDisplay(
@@ -310,6 +326,25 @@ export default function WorkPackageAssignmentsModal({
               )}
             </Pressable>
           ) : null}
+
+          <Text style={[styles.sectionLabel, styles.teamSectionLabel]}>TEAMS</Text>
+          {activeTeamAssignments.map((assignment) => {
+            const teamName = teams.find((item) => item.team.id === assignment.teamId)?.team.name ?? "Project Team";
+            return <View key={assignment.id} style={styles.teamRow}>
+              <View style={styles.teamIcon}><Ionicons name="people-outline" size={17} color={colors.brand.navy} /></View>
+              <Text style={styles.teamName} numberOfLines={1}>{teamName}</Text>
+              <Text style={styles.teamStatus}>Assigned</Text>
+              {canMutate && onRemoveTeam ? <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${teamName} assignment`} disabled={saving} onPress={() => Alert.alert("Remove Team assignment?", `${teamName} will no longer own responsibility for this Work Package. Individual assignments will remain unchanged.`, [{ text: "Cancel", style: "cancel" }, { text: "Remove", style: "destructive", onPress: () => onRemoveTeam(assignment.teamId) }])} style={styles.teamRemove}><Text style={styles.removeText}>Remove</Text></Pressable> : null}
+            </View>;
+          })}
+          {canMutate && onAssignTeam ? <>
+            <Text style={styles.fieldLabel}>ASSIGN TEAM</Text>
+            {teams.filter(({ team }) => team.status === "active" && !assignedTeamIds.has(team.id)).length === 0 ? <Text style={styles.pickerEmpty}>No unassigned active Teams are available.</Text> : teams.filter(({ team }) => team.status === "active" && !assignedTeamIds.has(team.id)).map(({ team, memberCount }) => <Pressable key={team.id} style={styles.teamPickerRow} disabled={saving} onPress={() => onAssignTeam(team.id)} accessibilityRole="button" accessibilityLabel={`Assign ${team.name}`}>
+              <View style={styles.teamIcon}><Ionicons name="people-outline" size={17} color={colors.brand.navy} /></View>
+              <View style={styles.memberCopy}><Text style={styles.memberLabel} numberOfLines={1}>{team.name}</Text><Text style={styles.memberRole}>{memberCount} {memberCount === 1 ? "member" : "members"}</Text></View>
+              <Text style={styles.assignSmall}>Assign</Text>
+            </Pressable>)}
+          </> : null}
         </ScrollView>
 
         <Modal
@@ -438,6 +473,14 @@ const styles = StyleSheet.create({
     color: colors.text.muted,
     marginBottom: 10,
   },
+  teamSectionLabel: { marginTop: 24 },
+  teamRow: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  teamIcon: { width: 32, height: 32, borderRadius: 9, backgroundColor: "rgba(1, 33, 105, 0.07)", alignItems: "center", justifyContent: "center" },
+  teamName: { ...typography.bodyMedium, color: colors.text.primary, flex: 1 },
+  teamStatus: { ...typography.caption, color: colors.text.secondary },
+  teamRemove: { minHeight: 40, justifyContent: "center", paddingHorizontal: 4 },
+  teamPickerRow: { minHeight: 56, flexDirection: "row", alignItems: "center", gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  assignSmall: { ...typography.caption, color: colors.brand.blue, fontWeight: "600" },
   emptyCard: {
     borderWidth: 1,
     borderColor: colors.border,

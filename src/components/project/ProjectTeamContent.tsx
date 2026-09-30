@@ -19,6 +19,7 @@ import {
   listProjectInvitations,
   type RemoteProjectInvitation,
 } from "../../services/api/invitations";
+import { getRemoteProjectMembers } from "../../services/api/projects";
 import { resolveProjectCollaborationContext } from "../../services/collaboration/projectCollaborationContext";
 import { getRemoteProjectId } from "../../store/projectCloudMappings";
 import type {
@@ -39,6 +40,8 @@ import { getPlanItemsForProject } from "../../store/planItems";
 import { colors, typography } from "../../theme/colors";
 import GroupAvatar from "../user/GroupAvatar";
 import UserAvatar from "../user/UserAvatar";
+import ProjectTeamsSection from "./ProjectTeamsSection";
+import ProjectRecentAssignmentsSection from "./ProjectRecentAssignmentsSection";
 import type {
   ProjectMember,
   ProjectMemberStatus,
@@ -167,6 +170,7 @@ export default function ProjectTeamContent({
     undefined,
   );
   const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [localMemberIds, setLocalMemberIds] = useState<Set<string>>(() => new Set());
   const [workPackages, setWorkPackages] = useState<WorkPackage[]>([]);
   const [assignments, setAssignments] = useState<WorkPackageAssignment[]>([]);
   const [planItems, setPlanItems] = useState<PlanItem[]>([]);
@@ -358,8 +362,30 @@ export default function ProjectTeamContent({
           return a.userId.localeCompare(b.userId);
         });
 
+        let displayMembers: ProjectMember[] = sortedMembers;
+        if (
+          mappedRemoteId &&
+          (!membership || membership.role === "owner")
+        ) {
+          try {
+            const remoteMembers = await getRemoteProjectMembers(mappedRemoteId);
+            if (remoteMembers.length > 0) {
+              displayMembers = [...remoteMembers].sort((a, b) => {
+                if (a.role === "owner" && b.role !== "owner") return -1;
+                if (b.role === "owner" && a.role !== "owner") return 1;
+                return a.userId.localeCompare(b.userId);
+              });
+            }
+          } catch {
+            // Local member rows remain available if owner cloud reads fail.
+          }
+        }
+
+        if (!active) return;
+
         setProject(found);
-        setMembers(sortedMembers);
+        setMembers(displayMembers);
+        setLocalMemberIds(new Set(memberItems.map((member) => member.id)));
         setWorkPackages(packageItems);
         setAssignments(assignmentItems);
         setPlanItems(planItemItems);
@@ -370,7 +396,7 @@ export default function ProjectTeamContent({
 
         try {
           const presentationContext = await fetchMemberPresentationContext({
-            members: sortedMembers,
+            members: displayMembers,
           });
 
           if (!active) {
@@ -467,6 +493,13 @@ export default function ProjectTeamContent({
     return members.find((member) => member.userId === user.uid);
   }, [members, user?.uid]);
 
+  const canManageTeams =
+    !isShared &&
+    !!remoteProjectId &&
+    (!currentProjectMember ||
+      (currentProjectMember.status === "active" &&
+        currentProjectMember.role === "owner"));
+
   const handleOpenProjectChat = async () => {
     if (!remoteProjectId || openingProjectChat) {
       return;
@@ -531,31 +564,48 @@ export default function ProjectTeamContent({
       {members.length > 0 ? (
         <>
           <View style={styles.memberSectionHeader}>
-            <Text style={styles.memberSectionTitle}>Team members..</Text>
-            <Text style={styles.memberSectionCount}>{memberCountLabel}</Text>
+            <Text style={styles.memberSectionTitle}>Project Members</Text>
+            <View style={styles.memberHeaderActions}>
+              <Text style={styles.memberSectionCount}>{memberCountLabel} members</Text>
+              {canInvite && inviteCloudReady ? (
+                <Pressable
+                  onPress={() => onInviteMember?.()}
+                  style={styles.inviteButton}
+                  accessibilityRole="button"
+                  accessibilityLabel="Invite project member"
+                >
+                  <Ionicons name="person-add-outline" size={15} color={colors.brand.navy} />
+                  <Text style={styles.inviteButtonText}>Invite</Text>
+                </Pressable>
+              ) : null}
+            </View>
           </View>
 
           {members.map((member) => {
             const isOwner = member.role === "owner";
+            const localMember = localMemberIds.has(member.id);
             const profile = profileByUserId.get(member.userId);
             const displayLabel = formatMemberDisplayLabel({
               displayName: profile?.displayName,
               email: profile?.email,
               role: member.role,
-              userId: member.userId,
+              userId:
+                localMember || profile?.displayName || profile?.email
+                  ? member.userId
+                  : undefined,
             });
-            const summary = memberSummaries.get(member.id);
-            const workLine = summary
-              ? formatTeamMemberWorkLine(summary)
-              : "No work assigned yet";
-            const packageLine = summary?.workPackageLabel ?? "";
+            const summary = localMember ? memberSummaries.get(member.id) : undefined;
+            const workLine = localMember
+              ? summary ? formatTeamMemberWorkLine(summary) : "No work assigned yet"
+              : "";
+            const packageLine = localMember ? summary?.workPackageLabel ?? "" : "";
 
             return (
               <View key={member.id}>
                 <Pressable
                   onPress={() => onOpenMember?.(member.id)}
                   accessibilityRole="button"
-                  accessibilityLabel={`${displayLabel}, ${formatProjectMemberRoleLabel(member.role)}, ${workLine}`}
+                  accessibilityLabel={`${displayLabel}, ${formatProjectMemberRoleLabel(member.role)}${workLine ? `, ${workLine}` : ""}`}
                   style={({ pressed }) => [
                     styles.memberRow,
                     pressed && styles.memberRowPressed,
@@ -583,19 +633,27 @@ export default function ProjectTeamContent({
                     >
                       {displayLabel}
                     </Text>
-                    <Text style={styles.memberRowSecondary} numberOfLines={1}>
-                      {formatProjectMemberRoleLabel(member.role)}
-                      {member.status !== "active"
-                        ? ` · ${formatStatusLabel(member.status)}`
-                        : ""}
-                    </Text>
+                    {profile?.email?.trim() ? (
+                      <Text style={styles.memberRowWorkPackage} numberOfLines={1}>
+                        {profile.email.trim()}
+                      </Text>
+                    ) : null}
                     {packageLine ? (
                       <Text style={styles.memberRowWorkPackage} numberOfLines={1}>
                         {packageLine}
                       </Text>
                     ) : null}
-                    <Text style={styles.memberRowWorkSummary} numberOfLines={1}>
-                      {workLine}
+                    {workLine ? (
+                      <Text style={styles.memberRowWorkSummary} numberOfLines={1}>
+                        {workLine}
+                      </Text>
+                    ) : null}
+                  </View>
+
+                  <View style={styles.memberRoleBadge}>
+                    <Text style={styles.memberRoleBadgeText} numberOfLines={1}>
+                      {formatProjectMemberRoleLabel(member.role)}
+                      {member.status !== "active" ? ` · ${formatStatusLabel(member.status)}` : ""}
                     </Text>
                   </View>
 
@@ -641,53 +699,45 @@ export default function ProjectTeamContent({
         </>
       ) : null}
 
+      <ProjectTeamsSection
+        projectId={remoteProjectId}
+        canManage={canManageTeams}
+      />
+
+      <ProjectRecentAssignmentsSection
+        remoteProjectId={remoteProjectId}
+        navigationProjectId={projectId}
+        isShared={isShared}
+        members={members}
+        profileByUserId={profileByUserId}
+      />
+
       {remoteProjectId ? (
         <>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Project Chat</Text>
+          </View>
           <Pressable
-            onPress={() => {
-              void handleOpenProjectChat();
-            }}
+            onPress={() => { void handleOpenProjectChat(); }}
             disabled={openingProjectChat}
             accessibilityRole="button"
             accessibilityLabel="Open Project Chat"
-            accessibilityState={{
-              disabled: openingProjectChat,
-              busy: openingProjectChat,
-            }}
-            style={({ pressed }) => [
-              styles.row,
-              styles.projectChatRow,
-              pressed && styles.rowPressed,
-              openingProjectChat && styles.chatRowDisabled,
-            ]}
+            accessibilityState={{ disabled: openingProjectChat, busy: openingProjectChat }}
+            style={({ pressed }) => [styles.row, styles.projectChatRow, pressed && styles.rowPressed, openingProjectChat && styles.chatRowDisabled]}
           >
-            <GroupAvatar
-              size={46}
-              imageUrl={projectConversation?.avatarUrl}
-              style={styles.rowAvatar}
-            />
+            <GroupAvatar size={46} imageUrl={projectConversation?.avatarUrl} style={styles.rowAvatar} />
             <View style={styles.rowContent}>
               <Text style={styles.rowPrimary}>Project Chat</Text>
               <Text style={styles.rowSecondary}>Team conversation</Text>
             </View>
-            <Ionicons
-              name="chevron-forward"
-              size={18}
-              color={CHEVRON_COLOR}
-            />
+            <Ionicons name="chevron-forward" size={18} color={CHEVRON_COLOR} />
           </Pressable>
           <View style={styles.rowSeparator} />
         </>
       ) : (
         <View style={[styles.syncNotice, styles.projectChatSyncNotice]}>
-          <Ionicons
-            name="cloud-offline-outline"
-            size={16}
-            color={colors.delta}
-          />
-          <Text style={styles.syncNoticeText}>
-            Cloud sync is required before Project Chat is available.
-          </Text>
+          <Ionicons name="cloud-offline-outline" size={16} color={colors.delta} />
+          <Text style={styles.syncNoticeText}>Cloud sync is required before Project Chat is available.</Text>
         </View>
       )}
 
@@ -697,9 +747,7 @@ export default function ProjectTeamContent({
         <>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Direct conversations</Text>
-            <Text style={styles.sectionCount}>
-              {String(directConversations.length)}
-            </Text>
+            <Text style={styles.sectionCount}>{String(directConversations.length)}</Text>
           </View>
           {directConversations.map((conversation) => {
             const presentation = resolveDirectConversationPresentation({
@@ -709,46 +757,23 @@ export default function ProjectTeamContent({
               messageableMembers,
               profileByUserId,
             });
-
             return (
               <View key={conversation.id}>
                 <Pressable
                   onPress={() => {
-                    if (!remoteProjectId) {
-                      return;
-                    }
-                    onOpenConversation?.({
-                      remoteProjectId,
-                      conversationId: conversation.id,
-                      titleHint: presentation.titleHint,
-                      subtitleHint: presentation.subtitleHint,
-                    });
+                    if (!remoteProjectId) return;
+                    onOpenConversation?.({ remoteProjectId, conversationId: conversation.id, titleHint: presentation.titleHint, subtitleHint: presentation.subtitleHint });
                   }}
                   accessibilityRole="button"
                   accessibilityLabel="Open direct conversation"
-                  style={({ pressed }) => [
-                    styles.row,
-                    pressed && styles.rowPressed,
-                  ]}
+                  style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
                 >
-                  <UserAvatar
-                    imageUrl={presentation.avatarUrl}
-                    size={44}
-                    style={styles.rowAvatar}
-                  />
+                  <UserAvatar imageUrl={presentation.avatarUrl} size={44} style={styles.rowAvatar} />
                   <View style={styles.rowContent}>
-                    <Text style={styles.rowPrimary} numberOfLines={1}>
-                      {presentation.rowPrimary}
-                    </Text>
-                    <Text style={styles.rowSecondary} numberOfLines={1}>
-                      {presentation.rowSecondary}
-                    </Text>
+                    <Text style={styles.rowPrimary} numberOfLines={1}>{presentation.rowPrimary}</Text>
+                    <Text style={styles.rowSecondary} numberOfLines={1}>{presentation.rowSecondary}</Text>
                   </View>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={18}
-                    color={CHEVRON_COLOR}
-                  />
+                  <Ionicons name="chevron-forward" size={18} color={CHEVRON_COLOR} />
                 </Pressable>
                 <View style={styles.rowSeparator} />
               </View>
@@ -758,7 +783,7 @@ export default function ProjectTeamContent({
       ) : null}
     </ScrollView>
 
-    {canInvite ? (
+    {canInvite && !inviteCloudReady ? (
       <Pressable
         style={({ pressed }) => [
           styles.floatingAddButton,
@@ -796,6 +821,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
+  memberHeaderActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   memberSectionTitle: {
     ...typography.sectionTitle,
     color: colors.text.primary,
@@ -805,6 +835,20 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.text.muted,
     fontSize: 12,
+  },
+  inviteButton: {
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    borderRadius: 9,
+    backgroundColor: "rgba(1, 33, 105, 0.06)",
+  },
+  inviteButtonText: {
+    ...typography.caption,
+    color: colors.brand.navy,
+    fontWeight: "600",
   },
   memberEmptyText: {
     ...typography.body,
@@ -841,6 +885,18 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.text.muted,
     marginTop: 2,
+  },
+  memberRoleBadge: {
+    maxWidth: 112,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: "rgba(1, 33, 105, 0.06)",
+    marginRight: 7,
+  },
+  memberRoleBadgeText: {
+    ...typography.metadata,
+    color: colors.brand.navy,
   },
   memberRowWorkPackage: {
     ...typography.caption,

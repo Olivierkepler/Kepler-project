@@ -18,6 +18,12 @@ export const COLLECTIONS = {
   workPackages: "workPackages",
   /** Flat WorkPackage ↔ ProjectMember assignments (Phase 2D). */
   workPackageAssignments: "workPackageAssignments",
+  /** Flat project-scoped Team entities (Team foundation). */
+  teams: "teams",
+  /** Flat Team ↔ ProjectMember memberships (Team foundation). */
+  teamMemberships: "teamMemberships",
+  /** Flat Team ↔ WorkPackage responsibility relationships. */
+  teamWorkPackageAssignments: "teamWorkPackageAssignments",
   /** Project planned progress baseline points (Phase 2A). */
   projectProgressBaselines: "projectProgressBaselines",
   /** Append-only project actual progress history (Phase 2A). */

@@ -8,6 +8,7 @@ export type ActivitySubjectType =
   | "project_member"
   | "work_package"
   | "assignment"
+  | "team_assignment"
   | "measurement"
   | "evidence"
   | "delta"
@@ -19,6 +20,8 @@ export type ActivitySourceType =
   | "contribution_review_event"
   | "measurement_create"
   | "assignment_create"
+  | "team_assignment_create"
+  | "team_assignment_remove"
   | "delta_create"
   | "invitation_create"
   | "invitation_accept"
@@ -47,6 +50,8 @@ export type ActivityEventType =
   | "invitation_created"
   | "invitation_accepted"
   | "member_removed"
+  | "team_assignment_created"
+  | "team_assignment_removed"
   | "feed_post_edited"
   | "feed_post_deleted";
 
@@ -70,6 +75,8 @@ export const ACTIVITY_EVENT_TYPES: readonly ActivityEventType[] = [
   "invitation_created",
   "invitation_accepted",
   "member_removed",
+  "team_assignment_created",
+  "team_assignment_removed",
   "feed_post_edited",
   "feed_post_deleted",
 ] as const;
@@ -91,6 +98,7 @@ export const VIEWER_VISIBLE_ACTIVITY_TYPES: ReadonlySet<ActivityEventType> =
 
 export type ActivityRelatedRefs = {
   workPackageId?: string;
+  teamId?: string;
   assignmentId?: string;
   projectMemberId?: string;
   planItemId?: string;
@@ -155,6 +163,8 @@ export function buildActivityEventId(parts: {
     | "contribution-review"
     | "measurement-create"
     | "assignment-create"
+    | "team-assignment-create"
+    | "team-assignment-remove"
     | "delta-create"
     | "agent-evidence-requested"
     | "agent-terminal"

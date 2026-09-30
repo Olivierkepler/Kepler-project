@@ -1,11 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 import {
   Pressable,
   Image,
+  Modal,
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from "react-native";
 
 import Ionicons from "@expo/vector-icons/Ionicons";
@@ -144,15 +146,23 @@ export default function PlanItemCard({
   showDivider = true,
 }: PlanItemCardProps) {
   const [failedImageUris, setFailedImageUris] = useState<string[]>([]);
+  const [actionMenuVisible, setActionMenuVisible] = useState(false);
+  const [actionMenuPosition, setActionMenuPosition] = useState({
+    top: 0,
+    left: 0,
+    width: 224,
+  });
+  const actionButtonRef = useRef<View>(null);
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const imageSource = getPlanItemImageDisplaySource(item, failedImageUris);
 
   useEffect(() => {
     setFailedImageUris([]);
   }, [item.imageUri, item.imageUrl]);
 
-  const hasActionIcons = Boolean(onView || onEdit || onShare);
-  const interactive = !!onPress && !hasActionIcons;
-  const showActions = hasActionIcons;
+  const rowAction = onView ?? onPress;
+  const interactive = Boolean(rowAction);
+  const showOverflow = Boolean(onEdit || onShare);
 
   const initials =
     getInitials(item.label);
@@ -201,66 +211,30 @@ export default function PlanItemCard({
         )
       : null;
 
-  const actionButtons = showActions ? (
-    <View style={styles.itemActions}>
-      {onView ? (
-        <Pressable
-          style={({ pressed }) => [
-            styles.actionButton,
-            pressed && styles.actionButtonPressed,
-          ]}
-          onPress={onView}
-          accessibilityRole="button"
-          accessibilityLabel={`View ${item.label}`}
-          hitSlop={4}
-        >
-          <Ionicons
-            name="eye-outline"
-            size={20}
-            color={KEPLER_NAVY}
-          />
-        </Pressable>
-      ) : null}
+  const openActionMenu = () => {
+    actionButtonRef.current?.measureInWindow((x, y, width, height) => {
+      const menuWidth = Math.min(224, windowWidth - 24);
+      const menuHeight = (onEdit ? 52 : 0) + (onShare ? 52 : 0);
+      const left = Math.max(
+        12,
+        Math.min(x + width - menuWidth, windowWidth - menuWidth - 12),
+      );
+      const below = y + height + 6;
+      const top =
+        below + menuHeight <= windowHeight - 12
+          ? below
+          : Math.max(12, y - menuHeight - 6);
+      setActionMenuPosition({ top, left, width: menuWidth });
+      setActionMenuVisible(true);
+    });
+  };
 
-      {onEdit ? (
-        <Pressable
-          style={({ pressed }) => [
-            styles.actionButton,
-            pressed && styles.actionButtonPressed,
-          ]}
-          onPress={onEdit}
-          accessibilityRole="button"
-          accessibilityLabel={`Edit ${item.label}`}
-          hitSlop={4}
-        >
-          <Ionicons
-            name="create-outline"
-            size={20}
-            color={KEPLER_NAVY}
-          />
-        </Pressable>
-      ) : null}
-
-      {onShare ? (
-        <Pressable
-          style={({ pressed }) => [
-            styles.actionButton,
-            pressed && styles.actionButtonPressed,
-          ]}
-          onPress={onShare}
-          accessibilityRole="button"
-          accessibilityLabel={`Share ${item.label}`}
-          hitSlop={4}
-        >
-          <Ionicons
-            name="share-outline"
-            size={20}
-            color={KEPLER_NAVY}
-          />
-        </Pressable>
-      ) : null}
-    </View>
-  ) : null;
+  const runMenuAction = (callback?: () => void) => {
+    setActionMenuVisible(false);
+    if (callback) {
+      requestAnimationFrame(callback);
+    }
+  };
 
   const rowBody = (
     <>
@@ -428,72 +402,36 @@ export default function PlanItemCard({
           </View>
         ) : null}
 
-        {/* Latest field + actions */}
-        {showActions ? (
-          <View style={styles.itemFooterRow}>
-            <View style={styles.measurementStatus}>
-              <Ionicons
-                name={
-                  latestMeasurement
-                    ? "checkmark-circle-outline"
-                    : "time-outline"
-                }
-                size={14}
-                color={
-                  latestMeasurement
-                    ? "#667085"
-                    : "#98A2B3"
-                }
-              />
+        {/* Latest field status */}
+        <View style={styles.previewRow}>
+          <Ionicons
+            name={
+              latestMeasurement
+                ? "checkmark-circle-outline"
+                : "time-outline"
+            }
+            size={14}
+            color={latestMeasurement ? "#667085" : "#98A2B3"}
+          />
 
-              <Text
-                style={styles.preview}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {fieldValue
-                  ? `Latest field: ${fieldValue}`
-                  : "No field measurement yet"}
-              </Text>
-            </View>
+          <Text
+            style={styles.preview}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {fieldValue
+              ? `Latest field: ${fieldValue}`
+              : "No field measurement yet"}
+          </Text>
 
-            {actionButtons}
-          </View>
-        ) : (
-          <View style={styles.previewRow}>
+          {interactive && !showOverflow ? (
             <Ionicons
-              name={
-                latestMeasurement
-                  ? "checkmark-circle-outline"
-                  : "time-outline"
-              }
-              size={14}
-              color={
-                latestMeasurement
-                  ? "#667085"
-                  : "#98A2B3"
-              }
+              name="chevron-forward"
+              size={16}
+              color="#C5CBD3"
             />
-
-            <Text
-              style={styles.preview}
-              numberOfLines={1}
-              ellipsizeMode="tail"
-            >
-              {fieldValue
-                ? `Latest field: ${fieldValue}`
-                : "No field measurement yet"}
-            </Text>
-
-            {interactive ? (
-              <Ionicons
-                name="chevron-forward"
-                size={16}
-                color="#C5CBD3"
-              />
-            ) : null}
-          </View>
-        )}
+          ) : null}
+        </View>
 
         {/* Read-only state */}
         {readOnly ? (
@@ -523,28 +461,86 @@ export default function PlanItemCard({
 
   return (
     <View style={styles.rowContainer}>
-    {hasActionIcons ? (
-      <View style={styles.row}>{rowBody}</View>
-    ) : (
-      <Pressable
-        style={({ pressed }) => [
-          styles.row,
-          pressed && interactive && styles.rowPressed,
-        ]}
-        onPress={interactive ? onPress : undefined}
-        disabled={!interactive}
-        accessibilityRole={interactive ? "button" : undefined}
-        accessibilityLabel={
-          interactive ? `Open plan item ${item.label}` : item.label
-        }
-      >
-        {rowBody}
-      </Pressable>
-    )}
+      <View style={styles.row}>
+        <Pressable
+          style={({ pressed }) => [
+            styles.rowPrimary,
+            pressed && interactive && styles.rowPressed,
+          ]}
+          onPress={rowAction}
+          disabled={!interactive}
+          accessibilityRole={interactive ? "button" : undefined}
+          accessibilityLabel={interactive ? `Open plan item ${item.label}` : item.label}
+        >
+          {rowBody}
+        </Pressable>
+        {showOverflow ? (
+          <Pressable
+            ref={actionButtonRef}
+            style={({ pressed }) => [
+              styles.overflowButton,
+              pressed && styles.overflowButtonPressed,
+            ]}
+            onPress={openActionMenu}
+            accessibilityRole="button"
+            accessibilityLabel="Plan item actions"
+            accessibilityState={{ expanded: actionMenuVisible }}
+          >
+            <Ionicons name="ellipsis-horizontal" size={20} color={KEPLER_NAVY} />
+          </Pressable>
+        ) : null}
+      </View>
 
-    {showDivider ? (
-      <View style={styles.rowDivider} />
-    ) : null}
+      <Modal
+        visible={actionMenuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setActionMenuVisible(false)}
+      >
+        <View style={styles.menuOverlay}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setActionMenuVisible(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Close plan item actions"
+          />
+          <View
+            style={[
+              styles.actionMenu,
+              {
+                top: actionMenuPosition.top,
+                left: actionMenuPosition.left,
+                width: actionMenuPosition.width,
+              },
+            ]}
+          >
+            {onEdit ? (
+              <Pressable
+                onPress={() => runMenuAction(onEdit)}
+                style={({ pressed }) => [styles.actionMenuItem, pressed && styles.actionMenuItemPressed]}
+                accessibilityRole="button"
+                accessibilityLabel="Edit Plan Item"
+              >
+                <Ionicons name="create-outline" size={18} color={KEPLER_NAVY} />
+                <Text style={styles.actionMenuLabel}>Edit Plan Item</Text>
+              </Pressable>
+            ) : null}
+            {onShare ? (
+              <Pressable
+                onPress={() => runMenuAction(onShare)}
+                style={({ pressed }) => [styles.actionMenuItem, pressed && styles.actionMenuItemPressed]}
+                accessibilityRole="button"
+                accessibilityLabel="Share Plan Item"
+              >
+                <Ionicons name="share-outline" size={18} color={KEPLER_NAVY} />
+                <Text style={styles.actionMenuLabel}>Share Plan Item</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
+
+      {showDivider ? <View style={styles.rowDivider} /> : null}
     </View>
   );
 }
@@ -562,19 +558,19 @@ const styles =
 
     row: {
       position: "relative",
-
       flexDirection: "row",
-
       alignItems: "center",
-
       paddingLeft: 14,
-
       paddingRight: 14,
-
       paddingVertical: 12,
+      backgroundColor: "#FFFFFF",
+    },
 
-      backgroundColor:
-        "#FFFFFF",
+    rowPrimary: {
+      flex: 1,
+      minWidth: 0,
+      flexDirection: "row",
+      alignItems: "center",
     },
 
     rowPressed: {
@@ -799,23 +795,6 @@ const styles =
       marginTop: 6,
     },
 
-    itemFooterRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      width: "100%",
-      marginTop: 7,
-    },
-
-    measurementStatus: {
-      flexDirection: "row",
-      alignItems: "center",
-      flex: 1,
-      minWidth: 0,
-      gap: 5,
-      marginRight: 4,
-    },
-
     preview: {
       ...typography.caption,
 
@@ -847,23 +826,55 @@ const styles =
       color: "#98A2B3",
     },
 
-    itemActions: {
-      flexDirection: "row",
-      alignItems: "center",
-      marginLeft: 8,
-      gap: 2,
-      flexShrink: 0,
-    },
-
-    actionButton: {
-      width: 40,
-      height: 40,
+    overflowButton: {
+      width: 42,
+      height: 42,
+      marginLeft: 4,
+      borderRadius: 10,
       alignItems: "center",
       justifyContent: "center",
     },
 
-    actionButtonPressed: {
-      opacity: 0.65,
+    overflowButtonPressed: {
+      backgroundColor: "#F2F4F7",
+    },
+
+    menuOverlay: {
+      flex: 1,
+    },
+
+    actionMenu: {
+      position: "absolute",
+      width: 224,
+      borderRadius: 12,
+      paddingHorizontal: 8,
+      backgroundColor: "#FFFFFF",
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: "#D0D5DD",
+      shadowColor: "#101828",
+      shadowOpacity: 0.16,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 9,
+    },
+
+    actionMenuItem: {
+      minHeight: 52,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      paddingHorizontal: 9,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: "#EAECF0",
+    },
+
+    actionMenuItemPressed: {
+      backgroundColor: "#F8FAFC",
+    },
+
+    actionMenuLabel: {
+      ...typography.bodyMedium,
+      color: "#344054",
     },
 
     /* ---------------------------------------------------------------------- */

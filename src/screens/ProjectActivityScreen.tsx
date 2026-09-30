@@ -17,6 +17,8 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useAuth } from "../auth/AuthProvider";
 import type { RootStackParamList } from "../navigation/types";
 import { getRemoteProjectActivity } from "../services/api/activity";
+import { getRemoteProjectMembers } from "../services/api/projects";
+import { listTeams } from "../services/api/teams";
 import { getRemoteWorkPackagesForProject } from "../services/api/workPackages";
 import { getDeltasForProject } from "../store/deltas";
 import { getEvidenceForProject } from "../store/evidence";
@@ -295,12 +297,14 @@ function LocalActivityCard({
 function CloudActivityCard({
   event,
   workPackageName,
+  assignmentTargetName,
 }: {
   event: RemoteActivityEvent;
   workPackageName?: string;
+  assignmentTargetName?: string;
 }) {
   const title = formatCloudActivityTitle(event.type);
-  const subtitle = formatCloudActivitySubtitle(event, { workPackageName });
+  const subtitle = formatCloudActivitySubtitle(event, { workPackageName, assignmentTargetName });
   const actor = formatActivityActorLabel(event.actorType);
 
   return (
@@ -345,11 +349,30 @@ export default function ProjectActivityScreen({
   const [workPackageNames, setWorkPackageNames] = useState<Map<string, string>>(
     () => new Map(),
   );
+  const [teamNames, setTeamNames] = useState<Map<string, string>>(() => new Map());
+  const [memberNames, setMemberNames] = useState<Map<string, string>>(() => new Map());
   const [remoteProjectId, setRemoteProjectId] = useState<string | null>(null);
   const [retryToken, setRetryToken] = useState(0);
 
   const knownIdsRef = useRef<Set<string>>(new Set());
   const loadingMoreRef = useRef(false);
+
+  const loadCloudPresentation = useCallback(async (remoteId: string) => {
+    const [packagesResult, teamsResult, membersResult] = await Promise.allSettled([
+      getRemoteWorkPackagesForProject(remoteId),
+      listTeams(remoteId),
+      getRemoteProjectMembers(remoteId),
+    ]);
+    setWorkPackageNames(packagesResult.status === "fulfilled"
+      ? new Map(packagesResult.value.map((item) => [item.id, item.name] as const))
+      : new Map());
+    setTeamNames(teamsResult.status === "fulfilled"
+      ? new Map(teamsResult.value.map((team) => [team.id, team.name] as const))
+      : new Map());
+    setMemberNames(membersResult.status === "fulfilled"
+      ? new Map(membersResult.value.map((member) => [member.id, member.displayName?.trim() || member.email?.trim() || "Project member"] as const))
+      : new Map());
+  }, []);
 
   const loadCloudPage = useCallback(
     async (
@@ -437,18 +460,7 @@ export default function ProjectActivityScreen({
           setProjectTitle("Shared project");
           setActivity([]);
 
-          try {
-            const packages = await getRemoteWorkPackagesForProject(projectId);
-            if (active) {
-              setWorkPackageNames(
-                new Map(packages.map((item) => [item.id, item.name] as const)),
-              );
-            }
-          } catch {
-            if (active) {
-              setWorkPackageNames(new Map());
-            }
-          }
+          if (active) await loadCloudPresentation(projectId);
 
           if (active) {
             await loadCloudPage(projectId, null, false, false);
@@ -487,16 +499,12 @@ export default function ProjectActivityScreen({
           setActivity([]);
 
           try {
-            const packages =
-              await getRemoteWorkPackagesForProject(mappedRemoteId);
-            if (active) {
-              setWorkPackageNames(
-                new Map(packages.map((item) => [item.id, item.name] as const)),
-              );
-            }
+            if (active) await loadCloudPresentation(mappedRemoteId);
           } catch {
             if (active) {
               setWorkPackageNames(new Map());
+              setTeamNames(new Map());
+              setMemberNames(new Map());
             }
           }
 
@@ -527,7 +535,7 @@ export default function ProjectActivityScreen({
       return () => {
         active = false;
       };
-    }, [projectId, user?.uid, isSharedRoute, loadCloudPage, retryToken]),
+    }, [projectId, user?.uid, isSharedRoute, loadCloudPage, loadCloudPresentation, retryToken]),
   );
 
   const activityCounts = useMemo(
@@ -670,6 +678,13 @@ export default function ProjectActivityScreen({
                 item.related.workPackageId
                   ? workPackageNames.get(item.related.workPackageId)
                   : undefined
+              }
+              assignmentTargetName={
+                item.related.teamId
+                  ? teamNames.get(item.related.teamId)
+                  : item.related.projectMemberId
+                    ? memberNames.get(item.related.projectMemberId)
+                    : undefined
               }
             />
           )}

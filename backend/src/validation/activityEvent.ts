@@ -23,6 +23,7 @@ const SUBJECT_TYPES: ReadonlySet<string> = new Set([
   "project_member",
   "work_package",
   "assignment",
+  "team_assignment",
   "measurement",
   "evidence",
   "delta",
@@ -35,6 +36,8 @@ const SOURCE_TYPES: ReadonlySet<string> = new Set([
   "contribution_review_event",
   "measurement_create",
   "assignment_create",
+  "team_assignment_create",
+  "team_assignment_remove",
   "delta_create",
   "invitation_create",
   "invitation_accept",
@@ -46,6 +49,7 @@ const SOURCE_TYPES: ReadonlySet<string> = new Set([
 
 const RELATED_KEYS: readonly (keyof ActivityRelatedRefs)[] = [
   "workPackageId",
+  "teamId",
   "assignmentId",
   "projectMemberId",
   "planItemId",

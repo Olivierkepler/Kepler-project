@@ -36,6 +36,7 @@ function parseRelated(value: unknown): RemoteActivityEvent["related"] {
   const related: RemoteActivityEvent["related"] = {};
   const keys = [
     "workPackageId",
+    "teamId",
     "assignmentId",
     "projectMemberId",
     "planItemId",

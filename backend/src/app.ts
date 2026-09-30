@@ -19,6 +19,8 @@ import { feedPostsRouter } from "./routes/feedPosts.js";
 import { searchRouter } from "./routes/search.js";
 import { workPackageAssignmentsRouter } from "./routes/workPackageAssignments.js";
 import { workPackagesRouter } from "./routes/workPackages.js";
+import { teamsRouter } from "./routes/teams.js";
+import { teamWorkPackageAssignmentsRouter } from "./routes/teamWorkPackageAssignments.js";
 
 export const app = express();
 
@@ -46,6 +48,8 @@ app.use("/api", measurementsRouter);
 app.use("/api", deltasRouter);
 app.use("/api", evidenceRouter);
 app.use("/api", workPackagesRouter);
+app.use("/api", teamsRouter);
+app.use("/api", teamWorkPackageAssignmentsRouter);
 app.use("/api", workPackageAssignmentsRouter);
 app.use("/api", conversationsRouter);
 app.use("/api", feedPostsRouter);
