@@ -8,6 +8,7 @@ import React, {
 
 import {
   ActivityIndicator,
+  Alert,
   ImageBackground,
   Pressable,
   ScrollView,
@@ -18,6 +19,7 @@ import {
 
 import {
   useFocusEffect,
+  useNavigation,
 } from "@react-navigation/native";
 
 import Ionicons from "@expo/vector-icons/Ionicons";
@@ -26,6 +28,13 @@ import { useAuth } from "../../auth/AuthProvider";
 
 import PlanItemCard from "./PlanItemCard";
 import OrganizeWorkModal from "./OrganizeWorkModal";
+import WorkPackageEditorModal, {
+  type WorkPackageFormValues,
+} from "./WorkPackageEditorModal";
+import WorkPackageImage from "./WorkPackageImage";
+import SharePlanItemSheet, {
+  type SharePlanItemDestination,
+} from "../chat/SharePlanItemSheet";
 
 import {
   listProjectInvitations,
@@ -62,6 +71,12 @@ import {
 import {
   getRemoteProjectId,
 } from "../../store/projectCloudMappings";
+import { getRemoteWorkPackageId } from "../../store/workPackageCloudMappings";
+import {
+  deleteRemoteWorkPackageImage,
+  getRemoteWorkPackagesForProject,
+} from "../../services/api/workPackages";
+import { uploadWorkPackageImage } from "../../services/workPackages/workPackageImage";
 
 import {
   getWorkPackageAssignmentsForProject,
@@ -69,7 +84,13 @@ import {
 
 import {
   getWorkPackagesForProject,
+  updateWorkPackage,
 } from "../../store/workPackages";
+
+import {
+  publishWorkPackageToCloud,
+  resolveCloudProjectMemberId,
+} from "../../services/sync/workPackageCloudPublish";
 
 import {
   typography,
@@ -113,10 +134,22 @@ import {
 } from "../../utils/domain/planItemAssignmentContext";
 
 import {
-  buildFilteredPlanWorkPackageGroups,
-  PLAN_LIST_FILTERS,
-  type PlanListFilter,
+  buildPlanWorkPackageGroups,
+  filterPlanItemsForListFilter,
 } from "../../utils/domain/planWorkPackageGroups";
+import PlanSearchFilterControls, {
+  type PlanAssignmentFilter,
+  type PlanStatusFilter,
+} from "./PlanSearchFilterControls";
+import { searchPlanWorkPackageGroups } from "../../utils/domain/planWorkPackageSearch";
+
+import {
+  resolveSharePlanItemDestination,
+  SharePlanItemFlowError,
+} from "../../utils/domain/sharePlanItemFlow";
+
+import type { RootStackParamList } from "../../navigation/types";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
 /* -------------------------------------------------------------------------- */
 /* Brand                                                                      */
@@ -175,32 +208,6 @@ function looksLikeInternalUserIdLabel(
   return false;
 }
 
-function formatPlanAssigneeLine(
-  assignee: {
-    nameLabel: string;
-    roleLabel: string;
-    hasAssignee: boolean;
-  },
-): string {
-  if (!assignee.hasAssignee) {
-    return "No assignee · Unassigned";
-  }
-
-  const nameLabel =
-    looksLikeInternalUserIdLabel(
-      assignee.nameLabel,
-    )
-      ? "Assigned member"
-      : assignee.nameLabel.trim() ||
-        "Assigned member";
-
-  if (!assignee.roleLabel.trim()) {
-    return nameLabel;
-  }
-
-  return `${nameLabel} · ${assignee.roleLabel}`;
-}
-
 function findUnassignedGroupKey(
   groups: readonly {
     key: string;
@@ -213,6 +220,42 @@ function findUnassignedGroupKey(
   );
 
   return unassigned?.key ?? null;
+}
+
+async function attachWorkPackageImagePresentations(input: {
+  ownerUid: string;
+  localProjectId: string;
+  workPackages: WorkPackage[];
+}): Promise<WorkPackage[]> {
+  try {
+    const remoteProjectId = await getRemoteProjectId(
+      input.ownerUid,
+      input.localProjectId,
+    );
+    if (!remoteProjectId) return input.workPackages;
+    const remotePackages = await getRemoteWorkPackagesForProject(remoteProjectId);
+    const remoteById = new Map(remotePackages.map((item) => [item.id, item] as const));
+    return await Promise.all(input.workPackages.map(async (workPackage) => {
+      try {
+        const remoteWorkPackageId = await getRemoteWorkPackageId(
+          input.ownerUid,
+          input.localProjectId,
+          workPackage.id,
+        );
+        const remote = remoteWorkPackageId
+          ? remoteById.get(remoteWorkPackageId)
+          : undefined;
+        return {
+          ...workPackage,
+          ...(remote?.imageUrl ? { imageUrl: remote.imageUrl } : {}),
+        };
+      } catch {
+        return workPackage;
+      }
+    }));
+  } catch {
+    return input.workPackages;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -239,6 +282,8 @@ export default function ProjectPlan({
   onOpenPlanItem,
 }: ProjectPlanProps) {
   const { user } = useAuth();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   const [
     project,
@@ -285,11 +330,15 @@ export default function ProjectPlan({
   ] = useState(false);
 
   const [
-    listFilter,
-    setListFilter,
-  ] = useState<PlanListFilter>(
-    "all",
-  );
+    editingWorkPackage,
+    setEditingWorkPackage,
+  ] = useState<WorkPackage | null>(null);
+  const [savingWorkPackage, setSavingWorkPackage] = useState(false);
+
+  const [statusFilter, setStatusFilter] = useState<PlanStatusFilter>("all");
+  const [assignmentFilter, setAssignmentFilter] =
+    useState<PlanAssignmentFilter>("all");
+  const [searchText, setSearchText] = useState("");
 
   const [
     expandedGroupKey,
@@ -309,10 +358,8 @@ export default function ProjectPlan({
    * Tracks the filter for which the default
    * accordion behavior was already applied.
    */
-  const accordionDefaultedFilterRef =
-    useRef<PlanListFilter | null>(
-      null,
-    );
+  const accordionDefaultedFilterRef = useRef<string | null>(null);
+  const searchAutoExpandedRef = useRef<string | null>(null);
 
   const [
     emailByUserId,
@@ -334,6 +381,34 @@ export default function ProjectPlan({
   >(
     () => new Map(),
   );
+
+  const [
+    remoteProjectId,
+    setRemoteProjectId,
+  ] = useState<string | null>(null);
+
+  const [
+    shareSheetVisible,
+    setShareSheetVisible,
+  ] = useState(false);
+
+  const [
+    shareTarget,
+    setShareTarget,
+  ] = useState<{
+    id: string;
+    label: string;
+  } | null>(null);
+
+  const [
+    shareError,
+    setShareError,
+  ] = useState<string | null>(null);
+
+  const [
+    sharing,
+    setSharing,
+  ] = useState(false);
 
   /* ------------------------------------------------------------------------ */
   /* Load                                                                     */
@@ -416,6 +491,14 @@ export default function ProjectPlan({
           return;
         }
 
+        const presentedPackageItems = await attachWorkPackageImagePresentations({
+          ownerUid,
+          localProjectId: projectId,
+          workPackages: packageItems,
+        });
+
+        if (!active) return;
+
         setProject(
           found ?? null,
         );
@@ -432,9 +515,7 @@ export default function ProjectPlan({
           deltaItems,
         );
 
-        setWorkPackages(
-          packageItems,
-        );
+        setWorkPackages(presentedPackageItems);
 
         setAssignments(
           assignmentItems,
@@ -460,6 +541,10 @@ export default function ProjectPlan({
           if (!active) {
             return;
           }
+
+          setRemoteProjectId(
+            remoteProjectId ?? null,
+          );
 
           if (remoteProjectId) {
             const invitations =
@@ -493,6 +578,9 @@ export default function ProjectPlan({
             }
           }
         } catch {
+          if (active) {
+            setRemoteProjectId(null);
+          }
           /**
            * Invitation display context
            * is optional.
@@ -592,44 +680,45 @@ export default function ProjectPlan({
       ],
     );
 
-  const workPackageGroups =
-    useMemo(
-      () =>
-        buildFilteredPlanWorkPackageGroups(
-          {
-            planItems:
-              sortedPlanItems,
-
-            workPackages,
-
-            assignments,
-
-            members,
-
-            projectId,
-
-            measurements,
-
-            filter:
-              listFilter,
-
-            emailByUserId,
-
-            profileByUserId,
-          },
-        ),
-      [
-        assignments,
-        emailByUserId,
-        profileByUserId,
-        listFilter,
-        measurements,
-        members,
-        projectId,
-        sortedPlanItems,
-        workPackages,
-      ],
-    );
+  const workPackageGroups = useMemo(() => {
+    const statusMatchedItems = filterPlanItemsForListFilter({
+      planItems: sortedPlanItems,
+      filter: statusFilter,
+      measurements,
+      assignmentByPlanItemId: planItemAssignmentMaps.byPlanItemId,
+    });
+    const visibleItems = filterPlanItemsForListFilter({
+      planItems: statusMatchedItems,
+      filter: assignmentFilter,
+      measurements,
+      assignmentByPlanItemId: planItemAssignmentMaps.byPlanItemId,
+    });
+    const groups = buildPlanWorkPackageGroups({
+      planItems: visibleItems,
+      workPackages,
+      assignments,
+      members,
+      projectId,
+      measurements,
+      emailByUserId,
+      profileByUserId,
+    });
+    return searchPlanWorkPackageGroups(groups, searchText, measurements);
+  }, [
+    assignmentFilter,
+    assignments,
+    emailByUserId,
+    members,
+    measurements,
+    planItemAssignmentMaps,
+    profileByUserId,
+    projectId,
+    searchText,
+    sortedPlanItems,
+    statusFilter,
+    workPackages,
+  ]);
+  const activeFilterKey = `${statusFilter}:${assignmentFilter}`;
 
   /* ------------------------------------------------------------------------ */
   /* Accordion                                                                */
@@ -648,16 +737,14 @@ export default function ProjectPlan({
       );
 
     if (
-      accordionDefaultedFilterRef
-        .current !==
-      listFilter
+      accordionDefaultedFilterRef.current !== activeFilterKey
     ) {
       setExpandedGroupKey(
         unassignedKey,
       );
 
       accordionDefaultedFilterRef.current =
-        listFilter;
+        activeFilterKey;
 
       return;
     }
@@ -672,9 +759,25 @@ export default function ProjectPlan({
     }
   }, [
     expandedGroupKey,
-    listFilter,
+    activeFilterKey,
     workPackageGroups,
   ]);
+
+  useEffect(() => {
+    const normalizedQuery = searchText.trim().toLocaleLowerCase();
+    if (!normalizedQuery) {
+      searchAutoExpandedRef.current = null;
+      return;
+    }
+    if (
+      workPackageGroups.length > 0 &&
+      searchAutoExpandedRef.current !== normalizedQuery
+    ) {
+      searchAutoExpandedRef.current = normalizedQuery;
+      accordionUserControlledRef.current = false;
+      setExpandedGroupKey(workPackageGroups[0].key);
+    }
+  }, [searchText, workPackageGroups]);
 
   const toggleGroupExpanded =
     useCallback(
@@ -693,6 +796,19 @@ export default function ProjectPlan({
       },
       [],
     );
+
+  const openWorkPackageEditor = useCallback(
+    (workPackageId: string | null) => {
+      if (!user?.uid || !workPackageId) {
+        return;
+      }
+      const workPackage = workPackages.find((item) => item.id === workPackageId);
+      if (workPackage) {
+        setEditingWorkPackage(workPackage);
+      }
+    },
+    [user?.uid, workPackages],
+  );
 
   /* ------------------------------------------------------------------------ */
   /* Reload assignment context                                                */
@@ -729,8 +845,14 @@ export default function ProjectPlan({
           ),
         ]);
 
+        const presentedPackageItems = await attachWorkPackageImagePresentations({
+          ownerUid,
+          localProjectId: projectId,
+          workPackages: packageItems,
+        });
+
         setWorkPackages(
-          packageItems,
+          presentedPackageItems,
         );
 
         setAssignments(
@@ -746,6 +868,199 @@ export default function ProjectPlan({
         user?.uid,
       ],
     );
+
+  const saveWorkPackageName = useCallback(
+    async (values: WorkPackageFormValues) => {
+      const current = editingWorkPackage;
+      const ownerUid = user?.uid;
+      const imageChanged = Boolean(values.pickedImage) || values.removeImage === true;
+
+      if (!current || !ownerUid || savingWorkPackage) {
+        return;
+      }
+
+      setSavingWorkPackage(true);
+      let updated: WorkPackage;
+
+      try {
+        const result = await updateWorkPackage(ownerUid, current.id, {
+          name: values.name,
+        });
+        if (!result) {
+          throw new Error("Work package not found.");
+        }
+        updated = result;
+      } catch (error) {
+        Alert.alert(
+          "Unable to save",
+          error instanceof Error ? error.message : "Unable to save work package.",
+        );
+        setSavingWorkPackage(false);
+        return;
+      }
+
+      setWorkPackages((items) =>
+        items.map((item) =>
+          item.id === updated.id
+            ? { ...updated, imageUrl: item.imageUrl }
+            : item,
+        ),
+      );
+
+      let committedImageUrl: string | undefined;
+      let imageError: string | null = null;
+      let cloudError: string | null = null;
+      if (imageChanged) {
+        try {
+          let remoteProjectId = await getRemoteProjectId(ownerUid, projectId);
+          if (!remoteProjectId) {
+            throw new Error("Connect this project to cloud before changing a Work Package image.");
+          }
+          const resolvedRemoteProjectId = remoteProjectId;
+
+          let remoteWorkPackageId = await getRemoteWorkPackageId(
+            ownerUid,
+            projectId,
+            current.id,
+          );
+          if (!remoteWorkPackageId) {
+            const desiredCloudProjectMemberIds = assignments
+              .filter(
+                (assignment) =>
+                  assignment.workPackageId === updated.id &&
+                  assignment.status !== "cancelled",
+              )
+              .map((assignment) => {
+                const member = members.find(
+                  (candidate) => candidate.id === assignment.projectMemberId,
+                );
+                return resolveCloudProjectMemberId({
+                  selectedMemberId: assignment.projectMemberId,
+                  remoteProjectId: resolvedRemoteProjectId,
+                  memberUserId: member?.userId ?? null,
+                });
+              });
+            const publishResult = await publishWorkPackageToCloud({
+              ownerUid,
+              localProjectId: projectId,
+              localWorkPackage: {
+                id: updated.id,
+                name: updated.name,
+                description: updated.description,
+                status: updated.status,
+                planItemIds: updated.planItemIds,
+              },
+              desiredCloudProjectMemberIds,
+            });
+            if (!publishResult.ok || publishResult.skipped) {
+              throw new Error(
+                publishResult.ok
+                  ? "Work Package is not connected to cloud yet."
+                  : publishResult.error,
+              );
+            }
+            remoteProjectId = publishResult.remoteProjectId;
+            remoteWorkPackageId = publishResult.remoteWorkPackageId;
+          }
+
+          if (values.pickedImage) {
+            const remote = await uploadWorkPackageImage({
+              remoteProjectId,
+              remoteWorkPackageId,
+              image: values.pickedImage,
+            });
+            committedImageUrl = remote.imageUrl;
+          } else if (values.removeImage) {
+            const remote = await deleteRemoteWorkPackageImage(
+              remoteProjectId,
+              remoteWorkPackageId,
+            );
+            committedImageUrl = remote.imageUrl;
+          }
+          setWorkPackages((items) =>
+            items.map((item) =>
+              item.id === updated.id
+                ? { ...item, imageUrl: values.removeImage ? undefined : committedImageUrl }
+                : item,
+            ),
+          );
+        } catch (error) {
+          imageError = error instanceof Error
+            ? error.message
+            : "The Work Package image could not be saved.";
+        }
+      }
+
+      // Local name persistence is complete. Cloud publication follows the
+      // established Work Packages path and cannot undo the local edit.
+      try {
+        const remoteId = await getRemoteProjectId(ownerUid, projectId);
+        const desiredCloudProjectMemberIds = remoteId
+          ? assignments
+              .filter(
+                (assignment) =>
+                  assignment.workPackageId === updated.id &&
+                  assignment.status !== "cancelled",
+              )
+              .map((assignment) => {
+                const member = members.find(
+                  (candidate) => candidate.id === assignment.projectMemberId,
+                );
+                return resolveCloudProjectMemberId({
+                  selectedMemberId: assignment.projectMemberId,
+                  remoteProjectId: remoteId,
+                  memberUserId: member?.userId ?? null,
+                });
+              })
+          : [];
+
+        const publishResult = await publishWorkPackageToCloud({
+          ownerUid,
+          localProjectId: projectId,
+          localWorkPackage: {
+            id: updated.id,
+            name: updated.name,
+            description: updated.description,
+            status: updated.status,
+            planItemIds: updated.planItemIds,
+          },
+          desiredCloudProjectMemberIds,
+        });
+
+        if (!publishResult.ok) {
+          cloudError = publishResult.error;
+        }
+      } catch {
+        cloudError = "Unable to reach cloud synchronization.";
+      }
+
+      setSavingWorkPackage(false);
+      if (imageError) {
+        Alert.alert(
+          "Name saved on this device",
+          `The Work Package name is saved locally, but the image change did not finish. ${imageError}`,
+        );
+      } else {
+        setEditingWorkPackage(null);
+        if (cloudError) {
+          Alert.alert(
+            "Saved on this device",
+            `The Work Package name was saved locally, but its cloud update failed. ${cloudError}`,
+          );
+        }
+      }
+      void reloadAssignmentContext().catch(() => undefined);
+    },
+    [
+      assignments,
+      editingWorkPackage,
+      members,
+      projectId,
+      reloadAssignmentContext,
+      savingWorkPackage,
+      user?.uid,
+    ],
+  );
 
   /* ------------------------------------------------------------------------ */
   /* Baseline metrics                                                         */
@@ -786,6 +1101,89 @@ export default function ProjectPlan({
     Math.round(
       baselineProgress * 100,
     );
+
+  const openShareSheet = useCallback(
+    (
+      planItemId: string,
+      planItemLabel: string,
+    ) => {
+      setShareError(null);
+      setShareTarget({
+        id: planItemId,
+        label: planItemLabel,
+      });
+      setShareSheetVisible(true);
+    },
+    [],
+  );
+
+  const closeShareSheet = useCallback(() => {
+    setShareSheetVisible(false);
+    setShareTarget(null);
+    setShareError(null);
+  }, []);
+
+  const handleShareDestination = useCallback(
+    async (
+      destination: SharePlanItemDestination,
+    ) => {
+      if (
+        !user?.uid ||
+        !project ||
+        !shareTarget ||
+        sharing
+      ) {
+        return;
+      }
+
+      setSharing(true);
+      setShareError(null);
+
+      try {
+        const chatParams =
+          await resolveSharePlanItemDestination({
+            ownerUid: user.uid,
+            projectId,
+            planItemId: shareTarget.id,
+            planItemLabel: shareTarget.label,
+            projectName: project.name,
+            isShared: false,
+            remoteProjectId,
+            remotePlanItemId: null,
+            destination,
+          });
+
+        setRemoteProjectId(
+          chatParams.remoteProjectId,
+        );
+        closeShareSheet();
+        navigation.navigate(
+          "ProjectChat",
+          chatParams,
+        );
+      } catch (err) {
+        setShareError(
+          err instanceof SharePlanItemFlowError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : "Unable to share Plan Item.",
+        );
+      } finally {
+        setSharing(false);
+      }
+    },
+    [
+      closeShareSheet,
+      navigation,
+      project,
+      projectId,
+      remoteProjectId,
+      shareTarget,
+      sharing,
+      user?.uid,
+    ],
+  );
 
   /* ------------------------------------------------------------------------ */
   /* Loading                                                                  */
@@ -911,6 +1309,20 @@ export default function ProjectPlan({
           false
         }
       >
+        <PlanSearchFilterControls
+          searchText={searchText}
+          onSearchTextChange={setSearchText}
+          statusFilter={statusFilter}
+          assignmentFilter={assignmentFilter}
+          onApply={(status, assignment) => {
+            accordionUserControlledRef.current = false;
+            accordionDefaultedFilterRef.current = null;
+            searchAutoExpandedRef.current = null;
+            setStatusFilter(status);
+            setAssignmentFilter(assignment);
+          }}
+        />
+
         {/* Archived */}
 
         {isArchived ? (
@@ -1140,74 +1552,6 @@ export default function ProjectPlan({
               styles.planList
             }
           >
-            {/* Filters */}
-
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={
-                false
-              }
-              contentContainerStyle={
-                styles.filterRow
-              }
-              accessibilityRole="tablist"
-            >
-              {PLAN_LIST_FILTERS.map(
-                (
-                  filter,
-                ) => {
-                  const selected =
-                    listFilter ===
-                    filter.id;
-
-                  return (
-                    <Pressable
-                      key={
-                        filter.id
-                      }
-                      onPress={() => {
-                        accordionUserControlledRef.current =
-                          false;
-
-                        accordionDefaultedFilterRef.current =
-                          null;
-
-                        setListFilter(
-                          filter.id,
-                        );
-                      }}
-                      style={[
-                        styles.filterChip,
-
-                        selected &&
-                          styles.filterChipSelected,
-                      ]}
-                      accessibilityRole="tab"
-                      accessibilityLabel={
-                        filter.label
-                      }
-                      accessibilityState={{
-                        selected,
-                      }}
-                    >
-                      <Text
-                        style={[
-                          styles.filterChipText,
-
-                          selected &&
-                            styles.filterChipTextSelected,
-                        ]}
-                      >
-                        {
-                          filter.label
-                        }
-                      </Text>
-                    </Pressable>
-                  );
-                },
-              )}
-            </ScrollView>
-
             {/* Filter empty */}
 
             {workPackageGroups.length ===
@@ -1222,10 +1566,9 @@ export default function ProjectPlan({
                     styles.filterEmptyText
                   }
                 >
-                  {listFilter ===
-                  "all"
+                  {sortedPlanItems.length === 0
                     ? "No plan items yet."
-                    : "No plan items match this filter."}
+                    : "No matching plan items. Try adjusting your search or filters."}
                 </Text>
               </View>
             ) : (
@@ -1237,13 +1580,21 @@ export default function ProjectPlan({
                     expandedGroupKey ===
                     group.key;
 
-                  const itemCountLabel =
-                    `${group.items.length} ${
-                      group.items.length ===
-                      1
-                        ? "item"
-                        : "items"
-                    }`;
+                  const itemCountLabel = `${group.items.length} plan ${
+                    group.items.length === 1 ? "item" : "items"
+                  }`;
+                  const assigneeName = looksLikeInternalUserIdLabel(
+                    group.assignee.nameLabel,
+                  )
+                    ? "Assigned member"
+                    : group.assignee.nameLabel.trim() || "Assigned member";
+                  const genericAssignee =
+                    assigneeName === "Assigned member";
+                  const groupAssignmentLine = group.assignee.hasAssignee
+                    ? genericAssignee && group.assignee.roleLabel.trim()
+                      ? `Assigned · ${group.assignee.roleLabel}`
+                      : `Assigned to ${assigneeName}`
+                    : "Unassigned";
 
                   return (
                     <View
@@ -1258,96 +1609,58 @@ export default function ProjectPlan({
                       {/* Package Header                                   */}
                       {/* ------------------------------------------------ */}
 
-                      <Pressable
-                        onPress={() =>
-                          toggleGroupExpanded(
-                            group.key,
-                          )
-                        }
-                        style={
-                          styles.packageHeader
-                        }
-                        accessibilityRole="button"
-                        accessibilityLabel={`${group.title}, ${itemCountLabel}, ${formatPlanAssigneeLine(group.assignee)}`}
-                        accessibilityState={{
-                          expanded,
-                        }}
-                      >
-                        <View
-                          style={
-                            styles.packageHeaderText
-                          }
+                      <View style={styles.packageHeaderRow}>
+                        <Pressable
+                          onPress={() => toggleGroupExpanded(group.key)}
+                          style={styles.packageHeader}
+                          accessibilityRole="button"
+                          accessibilityLabel={`${group.title}, ${itemCountLabel}, ${groupAssignmentLine}`}
+                          accessibilityState={{ expanded }}
                         >
-                          <View
-                            style={
-                              styles.packageTitleRow
+                          <Ionicons
+                            name={expanded ? "chevron-down" : "chevron-forward"}
+                            size={18}
+                            color={TEXT_MUTED}
+                          />
+                          <WorkPackageImage
+                            uri={
+                              group.workPackageId
+                                ? workPackages.find(
+                                    (item) => item.id === group.workPackageId,
+                                  )?.imageUrl
+                                : undefined
                             }
-                          >
-                            <Text
-                              style={
-                                styles.packageTitle
-                              }
-                              numberOfLines={
-                                2
-                              }
-                            >
-                              {
-                                group.title
-                              }
+                            size={36}
+                            radius={9}
+                          />
+                          <View style={styles.packageHeaderText}>
+                            <Text style={styles.packageTitle} numberOfLines={2}>
+                              {group.title}
                             </Text>
-
-                            <Text
-                              style={
-                                styles.packageCount
-                              }
-                            >
-                              {
-                                itemCountLabel
-                              }
+                            <Text style={styles.packageAssignee} numberOfLines={2}>
+                              {itemCountLabel} · {groupAssignmentLine}
+                            </Text>
+                            <Text style={styles.packageSummary}>
+                              {group.measuredCount} measured · {group.pendingCount} pending
                             </Text>
                           </View>
-
-                          <Text
-                            style={
-                              styles.packageAssignee
-                            }
-                            numberOfLines={
-                              1
-                            }
+                        </Pressable>
+                        {user?.uid && group.workPackageId ? (
+                          <Pressable
+                            onPress={() => openWorkPackageEditor(group.workPackageId)}
+                            style={styles.packageEditButton}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Edit ${group.title}`}
+                            hitSlop={8}
                           >
-                            {formatPlanAssigneeLine(
-                              group.assignee,
-                            )}
-                          </Text>
-
-                          <Text
-                            style={
-                              styles.packageSummary
-                            }
-                          >
-                            {
-                              group.measuredCount
-                            }{" "}
-                            measured ·{" "}
-                            {
-                              group.pendingCount
-                            }{" "}
-                            pending
-                          </Text>
-                        </View>
-
-                        <Ionicons
-                          name={
-                            expanded
-                              ? "chevron-down"
-                              : "chevron-forward"
-                          }
-                          size={18}
-                          color={
-                            TEXT_MUTED
-                          }
-                        />
-                      </Pressable>
+                            <Ionicons
+                              name="create-outline"
+                              size={18}
+                              color={KEPLER_NAVY}
+                            />
+                          </Pressable>
+                        ) : null}
+                      </View>
 
                       {/* ------------------------------------------------ */}
                       {/* Expanded Plan Items                              */}
@@ -1402,11 +1715,27 @@ export default function ProjectPlan({
                                   null
                                 }
                                 showAssignmentMeta={
-                                  false
+                                  true
                                 }
-                                onPress={() =>
+                                onView={() =>
                                   onOpenPlanItem(
                                     item.id,
+                                  )
+                                }
+                                onEdit={() =>
+                                  navigation.navigate(
+                                    "EditPlanItem",
+                                    {
+                                      projectId,
+                                      planItemId:
+                                        item.id,
+                                    },
+                                  )
+                                }
+                                onShare={() =>
+                                  openShareSheet(
+                                    item.id,
+                                    item.label,
                                   )
                                 }
                                 showDivider={
@@ -1458,6 +1787,29 @@ export default function ProjectPlan({
           </View>
         ) : null}
       </ScrollView>
+
+      {shareError ? (
+        <View style={styles.shareErrorBanner}>
+          <Text style={styles.shareErrorText}>
+            {shareError}
+          </Text>
+        </View>
+      ) : null}
+
+      <SharePlanItemSheet
+        visible={shareSheetVisible}
+        remoteProjectId={remoteProjectId}
+        projectName={project.name}
+        planItemLabel={
+          shareTarget?.label ?? ""
+        }
+        onClose={closeShareSheet}
+        onSelect={(destination) => {
+          void handleShareDestination(
+            destination,
+          );
+        }}
+      />
 
       {/* -------------------------------------------------------------- */}
       {/* Floating Add                                                   */}
@@ -1515,6 +1867,38 @@ export default function ProjectPlan({
           }
           onUpdated={() => {
             void reloadAssignmentContext();
+          }}
+        />
+      ) : null}
+
+      {user?.uid ? (
+        <WorkPackageEditorModal
+          visible={editingWorkPackage !== null}
+          mode="edit"
+          nameOnly
+          imageUrl={editingWorkPackage?.imageUrl ?? null}
+          initial={
+            editingWorkPackage
+              ? {
+                  name: editingWorkPackage.name,
+                  description: editingWorkPackage.description ?? "",
+                  status: editingWorkPackage.status,
+                  planItemIds: [...editingWorkPackage.planItemIds],
+                }
+              : null
+          }
+          planItems={sortedPlanItems.map((item) => ({
+            id: item.id,
+            label: item.label,
+          }))}
+          saving={savingWorkPackage}
+          onClose={() => {
+            if (!savingWorkPackage) {
+              setEditingWorkPackage(null);
+            }
+          }}
+          onSubmit={(values) => {
+            void saveWorkPackageName(values);
           }}
         />
       ) : null}
@@ -1778,67 +2162,6 @@ const styles =
       marginTop: 12,
     },
 
-    /* ---------------------------------------------------------------------- */
-    /* Filters                                                                */
-    /* ---------------------------------------------------------------------- */
-
-    filterRow: {
-      paddingHorizontal: 2,
-
-      paddingRight: 36,
-
-      paddingBottom: 8,
-
-      gap: 8,
-
-      flexDirection: "row",
-
-      alignItems: "center",
-    },
-
-    filterChip: {
-      minHeight: 32,
-
-      paddingHorizontal: 10,
-
-      borderRadius: 999,
-
-      borderWidth:
-        StyleSheet.hairlineWidth,
-
-      borderColor:
-        "rgba(1,33,105,0.10)",
-
-      backgroundColor:
-        "rgba(255,255,255,0.45)",
-
-      alignItems: "center",
-
-      justifyContent:
-        "center",
-    },
-
-    filterChipSelected: {
-      borderColor:
-        KEPLER_NAVY,
-
-      backgroundColor:
-        KEPLER_NAVY,
-    },
-
-    filterChipText: {
-      ...typography.caption,
-
-      color:
-        KEPLER_NAVY,
-
-      fontWeight: "600",
-    },
-
-    filterChipTextSelected: {
-      color: "#FFFFFF",
-    },
-
     filterEmpty: {
       paddingHorizontal: 8,
 
@@ -1867,79 +2190,48 @@ const styles =
     },
 
     packageHeader: {
-      paddingHorizontal: 4,
-
-      paddingTop: 10,
-
-      paddingBottom: 8,
-
+      flex: 1,
+      paddingHorizontal: 8,
+      paddingVertical: 12,
       flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 10,
+      backgroundColor: "rgba(1,33,105,0.012)",
+    },
 
-      alignItems:
-        "flex-start",
+    packageHeaderRow: {
+      flexDirection: "row",
+      alignItems: "stretch",
+    },
 
-      gap: 8,
-
-      backgroundColor:
-        "rgba(1,33,105,0.012)",
+    packageEditButton: {
+      width: 42,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: "rgba(1,33,105,0.012)",
     },
 
     packageHeaderText: {
       flex: 1,
-
       minWidth: 0,
-    },
-
-    packageTitleRow: {
-      flexDirection: "row",
-
-      alignItems:
-        "flex-start",
-
-      justifyContent:
-        "space-between",
-
-      gap: 10,
     },
 
     packageTitle: {
       ...typography.bodyMedium,
-
-      color:
-        TEXT_PRIMARY,
-
-      flex: 1,
-
+      color: TEXT_PRIMARY,
       minWidth: 0,
-
       fontWeight: "700",
-    },
-
-    packageCount: {
-      ...typography.caption,
-
-      color:
-        TEXT_SECONDARY,
-
-      flexShrink: 0,
-
-      fontWeight: "600",
     },
 
     packageAssignee: {
       ...typography.caption,
-
       color: "#344054",
-
       marginTop: 3,
     },
 
     packageSummary: {
       ...typography.caption,
-
-      color:
-        TEXT_MUTED,
-
+      color: TEXT_MUTED,
       marginTop: 2,
     },
 
@@ -2078,6 +2370,25 @@ const styles =
         TEXT_MUTED,
 
       flex: 1,
+    },
+
+    shareErrorBanner: {
+      position: "absolute",
+      left: 14,
+      right: 14,
+      bottom: 90,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 12,
+      backgroundColor: "rgba(227,24,55,0.08)",
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: "rgba(227,24,55,0.18)",
+    },
+
+    shareErrorText: {
+      ...typography.caption,
+      color: KEPLER_RED,
+      textAlign: "center",
     },
 
     /* ---------------------------------------------------------------------- */

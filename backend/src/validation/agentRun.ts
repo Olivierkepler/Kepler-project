@@ -20,9 +20,16 @@ import {
   type CreateAgentRunInput,
 } from "../domain/agentRun.js";
 import {
+  ADDITIONAL_DELTA_EVIDENCE_REQUEST_MESSAGE,
   buildDeltaEvidenceRequestId,
   normalizeDeltaEvidenceRequestMessage,
 } from "../domain/deltaEvidenceRequest.js";
+import {
+  REPLACEMENT_EVIDENCE_REQUEST_MESSAGE,
+  UNSUPPORTED_MEDIA_ERROR_CATEGORY,
+  isEligibleForFailedEvidenceRecovery,
+} from "../domain/recoverableEvidenceFailure.js";
+import { isEligibleForStickyRequestEvidenceRecovery } from "../domain/stickyRequestEvidenceRecovery.js";
 import { isFiniteNumber, isNonEmptyString, isRecord } from "./primitives.js";
 
 function isValidTimestamp(value: unknown): value is string {
@@ -605,6 +612,295 @@ export function applyRequestDeltaEvidence(
   );
 
   return { outcome: "created", agentRun: next };
+}
+
+export type RequestReplacementDeltaEvidenceInput = {
+  message?: string;
+  nowIso?: string;
+  requestedProjectMemberId?: string | null;
+};
+
+/**
+ * Request replacement Delta Evidence when submitted media is unusable.
+ * Allowed even when direct Delta Evidence already exists (presence ≠ usable).
+ * Retains lastEvidenceId so the bad Evidence cannot be replayed via resume.
+ * Persists errorCategory = unsupported_media for audit.
+ */
+export function applyRequestReplacementDeltaEvidence(
+  current: AgentRun,
+  input: RequestReplacementDeltaEvidenceInput = {},
+): RequestDeltaEvidenceResult {
+  const requestId = buildDeltaEvidenceRequestId(current.id);
+  const nowIso = input.nowIso ?? new Date().toISOString();
+  const message = normalizeDeltaEvidenceRequestMessage(
+    input.message ?? REPLACEMENT_EVIDENCE_REQUEST_MESSAGE,
+  );
+
+  if (
+    current.status === "waiting_for_evidence" &&
+    current.pendingRequest !== null &&
+    current.pendingRequest.kind === "delta_evidence" &&
+    current.pendingRequest.requestId === requestId
+  ) {
+    return { outcome: "existing", agentRun: current };
+  }
+
+  if (
+    current.pendingRequest !== null &&
+    (current.pendingRequest.kind !== "delta_evidence" ||
+      current.pendingRequest.requestId !== requestId)
+  ) {
+    throw new AgentRunError(
+      "pending_request_conflict",
+      "Unexpected pendingRequest already exists",
+    );
+  }
+
+  if (current.status !== "running") {
+    throw new AgentRunError(
+      "illegal_status_for_evidence_request",
+      `Cannot request replacement Delta Evidence from status ${current.status}`,
+    );
+  }
+
+  if (!isAgentRunStepConsistentWithStatus("running", current.currentStep)) {
+    throw new AgentRunError(
+      "inconsistent_step_status",
+      "AgentRun currentStep is inconsistent with running status",
+    );
+  }
+
+  const resolvedMemberId =
+    input.requestedProjectMemberId === undefined
+      ? null
+      : input.requestedProjectMemberId === null
+        ? null
+        : input.requestedProjectMemberId.trim() || null;
+
+  const pendingRequest: AgentRunPendingRequest = {
+    kind: "delta_evidence",
+    message,
+    requestedAt: nowIso,
+    requestId,
+    requestedProjectMemberId: resolvedMemberId,
+  };
+
+  const next = applyAgentRunStateUpdate(
+    current,
+    {
+      status: "waiting_for_evidence",
+      currentStep: "waiting_for_evidence",
+      pendingRequest,
+      errorCategory: UNSUPPORTED_MEDIA_ERROR_CATEGORY,
+      // lastEvidenceId intentionally unchanged — blocks replay of bad Evidence.
+    },
+    nowIso,
+  );
+
+  return { outcome: "created", agentRun: next };
+}
+
+export type RequestAdditionalDeltaEvidenceInput = {
+  message?: string;
+  nowIso?: string;
+  requestedProjectMemberId?: string | null;
+};
+
+/**
+ * Post-analysis request_evidence when qualifying Delta Evidence already exists.
+ * Presence policy does not override the model's additional-evidence decision.
+ * Retains lastEvidenceId so the just-analyzed Evidence cannot be replayed.
+ * Does not set unsupported_media (distinct from replacement media recovery).
+ */
+export function applyRequestAdditionalDeltaEvidence(
+  current: AgentRun,
+  input: RequestAdditionalDeltaEvidenceInput = {},
+): RequestDeltaEvidenceResult {
+  const requestId = buildDeltaEvidenceRequestId(current.id);
+  const nowIso = input.nowIso ?? new Date().toISOString();
+  const message = normalizeDeltaEvidenceRequestMessage(
+    input.message ?? ADDITIONAL_DELTA_EVIDENCE_REQUEST_MESSAGE,
+  );
+
+  if (
+    current.status === "waiting_for_evidence" &&
+    current.pendingRequest !== null &&
+    current.pendingRequest.kind === "delta_evidence" &&
+    current.pendingRequest.requestId === requestId
+  ) {
+    return { outcome: "existing", agentRun: current };
+  }
+
+  if (
+    current.pendingRequest !== null &&
+    (current.pendingRequest.kind !== "delta_evidence" ||
+      current.pendingRequest.requestId !== requestId)
+  ) {
+    throw new AgentRunError(
+      "pending_request_conflict",
+      "Unexpected pendingRequest already exists",
+    );
+  }
+
+  if (current.status !== "running") {
+    throw new AgentRunError(
+      "illegal_status_for_evidence_request",
+      `Cannot request additional Delta Evidence from status ${current.status}`,
+    );
+  }
+
+  if (!isAgentRunStepConsistentWithStatus("running", current.currentStep)) {
+    throw new AgentRunError(
+      "inconsistent_step_status",
+      "AgentRun currentStep is inconsistent with running status",
+    );
+  }
+
+  const resolvedMemberId =
+    input.requestedProjectMemberId === undefined
+      ? null
+      : input.requestedProjectMemberId === null
+        ? null
+        : input.requestedProjectMemberId.trim() || null;
+
+  const pendingRequest: AgentRunPendingRequest = {
+    kind: "delta_evidence",
+    message,
+    requestedAt: nowIso,
+    requestId,
+    requestedProjectMemberId: resolvedMemberId,
+  };
+
+  const next = applyAgentRunStateUpdate(
+    current,
+    {
+      status: "waiting_for_evidence",
+      currentStep: "waiting_for_evidence",
+      pendingRequest,
+      errorCategory: null,
+      // lastEvidenceId intentionally unchanged — requires NEW Evidence to resume.
+    },
+    nowIso,
+  );
+
+  return { outcome: "created", agentRun: next };
+}
+
+export type RecoverStickyRequestEvidenceInput = {
+  message?: string;
+  nowIso?: string;
+  requestedProjectMemberId?: string | null;
+};
+
+export type RecoverStickyRequestEvidenceResult =
+  | { outcome: "recovered"; agentRun: AgentRun }
+  | { outcome: "existing"; agentRun: AgentRun };
+
+/**
+ * Owner recovery for sticky running/assess_variance after request_evidence
+ * fall-through. Same AgentRun; no task; no re-analysis; lastEvidenceId kept.
+ */
+export function applyRecoverStickyRequestEvidence(
+  current: AgentRun,
+  input: RecoverStickyRequestEvidenceInput = {},
+): RecoverStickyRequestEvidenceResult {
+  const requestId = buildDeltaEvidenceRequestId(current.id);
+
+  if (
+    current.status === "waiting_for_evidence" &&
+    current.currentStep === "waiting_for_evidence" &&
+    current.pendingRequest !== null &&
+    current.pendingRequest.kind === "delta_evidence" &&
+    current.pendingRequest.requestId === requestId
+  ) {
+    return { outcome: "existing", agentRun: current };
+  }
+
+  if (!isEligibleForStickyRequestEvidenceRecovery(current)) {
+    throw new AgentRunError(
+      "sticky_request_evidence_recovery_not_eligible",
+      "AgentRun is not eligible for sticky request_evidence recovery",
+    );
+  }
+
+  const applied = applyRequestAdditionalDeltaEvidence(current, input);
+  if (applied.outcome === "existing") {
+    return { outcome: "existing", agentRun: applied.agentRun };
+  }
+
+  return { outcome: "recovered", agentRun: applied.agentRun };
+}
+
+export type RecoverFailedFieldVarianceEvidenceInput = {
+  message?: string;
+  nowIso?: string;
+  requestedProjectMemberId?: string | null;
+};
+
+export type RecoverFailedFieldVarianceEvidenceResult =
+  | { outcome: "recovered"; agentRun: AgentRun }
+  | { outcome: "existing"; agentRun: AgentRun };
+
+/**
+ * Narrow explicit recovery for legacy failed runs whose errorCategory indicates
+ * recoverable unusable evidence. Does not enqueue tasks or reprocess Evidence.
+ */
+export function applyRecoverFailedFieldVarianceEvidence(
+  current: AgentRun,
+  input: RecoverFailedFieldVarianceEvidenceInput = {},
+): RecoverFailedFieldVarianceEvidenceResult {
+  const requestId = buildDeltaEvidenceRequestId(current.id);
+  const nowIso = input.nowIso ?? new Date().toISOString();
+
+  if (
+    current.status === "waiting_for_evidence" &&
+    current.currentStep === "waiting_for_evidence" &&
+    current.pendingRequest !== null &&
+    current.pendingRequest.kind === "delta_evidence"
+  ) {
+    return { outcome: "existing", agentRun: current };
+  }
+
+  if (!isEligibleForFailedEvidenceRecovery(current)) {
+    throw new AgentRunError(
+      "evidence_recovery_not_eligible",
+      "AgentRun is not eligible for recoverable evidence recovery",
+    );
+  }
+
+  const message = normalizeDeltaEvidenceRequestMessage(
+    input.message ?? REPLACEMENT_EVIDENCE_REQUEST_MESSAGE,
+  );
+
+  const resolvedMemberId =
+    input.requestedProjectMemberId === undefined
+      ? null
+      : input.requestedProjectMemberId === null
+        ? null
+        : input.requestedProjectMemberId.trim() || null;
+
+  const pendingRequest: AgentRunPendingRequest = {
+    kind: "delta_evidence",
+    message,
+    requestedAt: nowIso,
+    requestId,
+    requestedProjectMemberId: resolvedMemberId,
+  };
+
+  const next = applyAgentRunStateUpdate(
+    current,
+    {
+      status: "waiting_for_evidence",
+      currentStep: "waiting_for_evidence",
+      pendingRequest,
+      errorCategory: UNSUPPORTED_MEDIA_ERROR_CATEGORY,
+      outcome: null,
+      // lastEvidenceId retained — new Evidence required for resume.
+    },
+    nowIso,
+  );
+
+  return { outcome: "recovered", agentRun: next };
 }
 
 export type ResumeFromDeltaEvidenceInput = {

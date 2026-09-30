@@ -9,6 +9,7 @@ export type UserProfile = {
   email: string;
   createdAt: string | null;
   updatedAt: string | null;
+  avatarUrl: string | null;
 };
 
 export const MAX_USER_DISPLAY_NAME_LENGTH = 120;

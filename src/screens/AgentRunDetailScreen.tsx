@@ -15,7 +15,7 @@ import NetInfo from "@react-native-community/netinfo";
 
 import { useAuth } from "../auth/AuthProvider";
 import type { RootStackParamList } from "../navigation/types";
-import { getAgentRun } from "../services/api/agentRuns";
+import { getAgentRun, recoverAgentRunEvidence, recoverStickyRequestEvidence } from "../services/api/agentRuns";
 import { getDeltaById } from "../store/deltas";
 import { getProjectById } from "../store/projects";
 import { getRemoteProjectId } from "../store/projectCloudMappings";
@@ -90,6 +90,7 @@ export default function AgentRunDetailScreen({ route, navigation }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
   const [focused, setFocused] = useState(false);
+  const [recovering, setRecovering] = useState(false);
 
   const resumePollUntilRef = useRef<number>(
     awaitingResume ? Date.now() + RESUME_POLL_DURATION_MS : 0,
@@ -212,6 +213,92 @@ export default function AgentRunDetailScreen({ route, navigation }: Props) {
       deltaId: run.deltaContext.localDeltaId,
       returnToAgentRunId: agentRunId,
     });
+  };
+
+  const tryAnotherPhoto = async () => {
+    if (!user?.uid || !run || recovering) {
+      return;
+    }
+
+    setRecovering(true);
+    setError(null);
+
+    try {
+      const remoteProjectId = await getRemoteProjectId(user.uid, projectId);
+      if (!remoteProjectId) {
+        setError("Could not reopen this agent run for a new photo.");
+        return;
+      }
+
+      const recovered = await recoverAgentRunEvidence(
+        remoteProjectId,
+        agentRunId,
+      );
+      setRun(recovered);
+
+      if (
+        recovered.status === "waiting_for_evidence" &&
+        recovered.pendingRequest?.kind === "delta_evidence"
+      ) {
+        navigation.navigate("AddEvidence", {
+          projectId,
+          mode: "photo",
+          deltaId: recovered.deltaContext.localDeltaId,
+          returnToAgentRunId: agentRunId,
+        });
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not reopen this agent run for a new photo.",
+      );
+    } finally {
+      setRecovering(false);
+    }
+  };
+
+  const reopenForAdditionalEvidence = async () => {
+    if (!user?.uid || !run || recovering) {
+      return;
+    }
+
+    setRecovering(true);
+    setError(null);
+
+    try {
+      const remoteProjectId = await getRemoteProjectId(user.uid, projectId);
+      if (!remoteProjectId) {
+        setError("Could not reopen this agent run for additional evidence.");
+        return;
+      }
+
+      const recovered = await recoverStickyRequestEvidence(
+        remoteProjectId,
+        agentRunId,
+      );
+      setRun(recovered);
+
+      if (
+        recovered.status === "waiting_for_evidence" &&
+        recovered.pendingRequest?.kind === "delta_evidence"
+      ) {
+        navigation.navigate("AddEvidence", {
+          projectId,
+          mode: "photo",
+          deltaId: recovered.deltaContext.localDeltaId,
+          returnToAgentRunId: agentRunId,
+        });
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not reopen this agent run for additional evidence.",
+      );
+    } finally {
+      setRecovering(false);
+    }
   };
 
   const openSummary = () => {
@@ -339,15 +426,51 @@ export default function AgentRunDetailScreen({ route, navigation }: Props) {
           </View>
         ) : null}
 
+        {run.status === "running" && run.canRecoverStickyRequestEvidence ? (
+          <View style={styles.requestCard}>
+            <Text style={styles.requestEyebrow}>EVIDENCE NEEDED</Text>
+            <Text style={styles.requestMessage}>
+              Capture another clear photo showing the affected work.
+            </Text>
+            <Pressable
+              style={styles.primaryButton}
+              onPress={() => void reopenForAdditionalEvidence()}
+              disabled={recovering}
+              accessibilityRole="button"
+              accessibilityLabel="Add more evidence"
+            >
+              <Text style={styles.primaryButtonText}>
+                {recovering ? "Opening…" : "Add more evidence"}
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
+
         {run.status === "failed" ? (
           <View style={styles.alertCard}>
             <Text style={styles.alertEyebrow}>AGENT NEEDS ATTENTION</Text>
             <Text style={styles.alertMessage}>
-              The automated review could not be completed.
+              {run.canRecoverEvidence
+                ? "The submitted photo could not be analyzed."
+                : "The automated review could not be completed."}
             </Text>
-            <Text style={styles.alertHint}>
-              Retry support is not available in this build.
-            </Text>
+            {run.canRecoverEvidence ? (
+              <Pressable
+                style={styles.primaryButton}
+                onPress={() => void tryAnotherPhoto()}
+                disabled={recovering}
+                accessibilityRole="button"
+                accessibilityLabel="Try another photo"
+              >
+                <Text style={styles.primaryButtonText}>
+                  {recovering ? "Opening…" : "Try another photo"}
+                </Text>
+              </Pressable>
+            ) : (
+              <Text style={styles.alertHint}>
+                Retry support is not available in this build.
+              </Text>
+            )}
           </View>
         ) : null}
 

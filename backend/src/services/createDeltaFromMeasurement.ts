@@ -28,33 +28,87 @@ export function createCollaboratorReviewLocalDeltaId(
 }
 
 /**
- * Builds a length Delta from a Measurement + PlanItem using the same
- * Plan-vs-Reality semantics as mobile createDeltaFromMeasurement.
- *
- * Returns null when the pair is not eligible (zero difference, unit
- * mismatch, invalid rates/costs, etc.).
- *
- * localDeltaId / id are deterministic from project + measurement.
+ * Deterministic localDeltaId for owner server reconciliation (Phase 2F-C).
+ * Format: owner-reconcile-{localMeasurementId}
  */
-export function createDeltaFromMeasurement(
+export function createOwnerReconcileLocalDeltaId(
+  localMeasurementId: string,
+): string {
+  const local = localMeasurementId.trim();
+  if (!local) {
+    throw new Error("localMeasurementId is required");
+  }
+  if (local.includes("/")) {
+    throw new Error("localMeasurementId must not contain '/'");
+  }
+  return `owner-reconcile-${local}`;
+}
+
+export type DeltaBuildIneligibleReason =
+  | "project_mismatch"
+  | "type_mismatch"
+  | "unit_mismatch"
+  | "invalid_unit_cost"
+  | "invalid_production_rate"
+  | "invalid_labor_rate"
+  | "schedule_labor_unavailable";
+
+/**
+ * Discriminated Plan-vs-Reality build result.
+ * Separates exact zero variance from ineligible calculation inputs.
+ */
+export type BuildDeltaFromMeasurementResult =
+  | { status: "ok"; delta: Delta }
+  | { status: "no_delta"; reason: "zero_difference" }
+  | { status: "ineligible"; reason: DeltaBuildIneligibleReason };
+
+/**
+ * Canonical length Delta construction from Measurement + PlanItem.
+ * Identity (`localDeltaId`) is supplied by the calling workflow.
+ * Does not persist; does not trigger Activity or agent.
+ */
+export function buildDeltaFromMeasurement(
   measurement: Measurement,
   planItem: PlanItem,
+  localDeltaId: string,
   createdAt: string = new Date().toISOString(),
-): Delta | null {
+): BuildDeltaFromMeasurementResult {
+  const trimmedLocalDeltaId = localDeltaId.trim();
+  if (!trimmedLocalDeltaId || trimmedLocalDeltaId.includes("/")) {
+    return { status: "ineligible", reason: "project_mismatch" };
+  }
+
   if (
     measurement.projectId !== planItem.projectId ||
-    measurement.planItemId !== planItem.id ||
-    planItem.type !== "length" ||
-    measurement.type !== "length" ||
-    planItem.unit !== measurement.unit ||
-    !Number.isFinite(planItem.unitCost) ||
-    planItem.unitCost < 0 ||
+    measurement.planItemId !== planItem.id
+  ) {
+    return { status: "ineligible", reason: "project_mismatch" };
+  }
+
+  if (planItem.type !== "length" || measurement.type !== "length") {
+    return { status: "ineligible", reason: "type_mismatch" };
+  }
+
+  if (planItem.unit !== measurement.unit) {
+    return { status: "ineligible", reason: "unit_mismatch" };
+  }
+
+  if (!Number.isFinite(planItem.unitCost) || planItem.unitCost < 0) {
+    return { status: "ineligible", reason: "invalid_unit_cost" };
+  }
+
+  if (
     !Number.isFinite(planItem.productionRatePerDay) ||
-    planItem.productionRatePerDay <= 0 ||
+    planItem.productionRatePerDay <= 0
+  ) {
+    return { status: "ineligible", reason: "invalid_production_rate" };
+  }
+
+  if (
     !Number.isFinite(planItem.laborHoursPerUnit) ||
     planItem.laborHoursPerUnit < 0
   ) {
-    return null;
+    return { status: "ineligible", reason: "invalid_labor_rate" };
   }
 
   const difference = calculateDifference(
@@ -63,7 +117,7 @@ export function createDeltaFromMeasurement(
   );
 
   if (difference === 0) {
-    return null;
+    return { status: "no_delta", reason: "zero_difference" };
   }
 
   const scheduleImpactDays = calculateScheduleImpactDays(
@@ -76,37 +130,55 @@ export function createDeltaFromMeasurement(
   );
 
   if (scheduleImpactDays === null || laborImpactHours === null) {
-    return null;
+    return { status: "ineligible", reason: "schedule_labor_unavailable" };
   }
 
-  const localDeltaId = createCollaboratorReviewLocalDeltaId(
-    measurement.localMeasurementId,
+  return {
+    status: "ok",
+    delta: {
+      id: createRemoteDeltaId(measurement.projectId, trimmedLocalDeltaId),
+      localDeltaId: trimmedLocalDeltaId,
+      projectId: measurement.projectId,
+      planItemId: measurement.planItemId,
+      measurementId: measurement.id,
+      type: "length",
+      plannedValue: planItem.plannedValue,
+      actualValue: measurement.value,
+      difference,
+      percentDifference: calculatePercentDifference(
+        planItem.plannedValue,
+        measurement.value,
+      ),
+      unit: measurement.unit,
+      unitCost: planItem.unitCost,
+      costImpact: calculateCostImpact(difference, planItem.unitCost),
+      productionRatePerDay: planItem.productionRatePerDay,
+      scheduleImpactDays,
+      laborHoursPerUnit: planItem.laborHoursPerUnit,
+      laborImpactHours,
+      status: "open",
+      dispositionReason: "",
+      disposedAt: null,
+      createdAt,
+    },
+  };
+}
+
+/**
+ * Collaborator-compatible wrapper: uses collab-review-* identity.
+ * Returns null for zero difference or ineligible inputs (legacy contract).
+ */
+export function createDeltaFromMeasurement(
+  measurement: Measurement,
+  planItem: PlanItem,
+  createdAt: string = new Date().toISOString(),
+): Delta | null {
+  const result = buildDeltaFromMeasurement(
+    measurement,
+    planItem,
+    createCollaboratorReviewLocalDeltaId(measurement.localMeasurementId),
+    createdAt,
   );
 
-  return {
-    id: createRemoteDeltaId(measurement.projectId, localDeltaId),
-    localDeltaId,
-    projectId: measurement.projectId,
-    planItemId: measurement.planItemId,
-    measurementId: measurement.id,
-    type: "length",
-    plannedValue: planItem.plannedValue,
-    actualValue: measurement.value,
-    difference,
-    percentDifference: calculatePercentDifference(
-      planItem.plannedValue,
-      measurement.value,
-    ),
-    unit: measurement.unit,
-    unitCost: planItem.unitCost,
-    costImpact: calculateCostImpact(difference, planItem.unitCost),
-    productionRatePerDay: planItem.productionRatePerDay,
-    scheduleImpactDays,
-    laborHoursPerUnit: planItem.laborHoursPerUnit,
-    laborImpactHours,
-    status: "open",
-    dispositionReason: "",
-    disposedAt: null,
-    createdAt,
-  };
+  return result.status === "ok" ? result.delta : null;
 }

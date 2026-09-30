@@ -486,6 +486,7 @@ const styles = StyleSheet.create({
 
     paddingHorizontal: 0,
 
+
     // Slightly more room at the top for the 2px accent.
     paddingTop: 16,
     paddingBottom: 14,
@@ -552,6 +553,8 @@ const styles = StyleSheet.create({
     gap: 10,
 
     marginBottom: 9,
+    paddingHorizontal: 8,
+
   },
 
   headerCopy: {
@@ -567,6 +570,7 @@ const styles = StyleSheet.create({
 
     justifyContent: "space-between",
 
+
     gap: 8,
   },
 
@@ -578,6 +582,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
 
     fontSize: 14.5,
+
 
     flex: 1,
   },
@@ -636,10 +641,12 @@ const styles = StyleSheet.create({
     ...typography.body,
 
     color: "#101828",
+    paddingHorizontal: 10,
 
-    fontSize: 15,
+    fontSize: 13,
 
-    lineHeight: 21,
+    lineHeight: 20,
+
   },
 
   mediaWrap: {
@@ -682,6 +689,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
 
     gap: 4,
+    paddingHorizontal: 8,
   },
 
   summaryDot: {
@@ -698,6 +706,7 @@ const styles = StyleSheet.create({
     color: "#667085",
 
     fontSize: 12,
+
   },
 
   /* ---------------------------------------------------------------------- */

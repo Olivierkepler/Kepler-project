@@ -9,6 +9,10 @@ import type {
   ChatMessage,
   ChatMessageReference,
 } from "../domain/chatMessage.js";
+import {
+  isAllowedProjectChatAvatarContentType,
+  isProjectChatAvatarObjectId,
+} from "../storage/projectChatAvatarStorage.js";
 import { isNonEmptyString, isRecord } from "./primitives.js";
 
 export function isConversationType(value: unknown): value is ConversationType {
@@ -60,6 +64,20 @@ export function normalizeConversationDocument(
     .map((item) => item.trim())
     .filter(Boolean);
 
+  const avatarStoragePath =
+    data.avatarStoragePath === undefined || data.avatarStoragePath === null
+      ? null
+      : isNonEmptyString(data.avatarStoragePath)
+        ? data.avatarStoragePath.trim()
+        : undefined;
+
+  if (
+    avatarStoragePath === undefined ||
+    (data.type === "direct" && avatarStoragePath !== null)
+  ) {
+    return undefined;
+  }
+
   if (data.type === "direct" && participantProjectMemberIds.length !== 2) {
     return undefined;
   }
@@ -83,6 +101,7 @@ export function normalizeConversationDocument(
       typeof data.lastMessagePreview === "string"
         ? data.lastMessagePreview.trim() || null
         : null,
+    avatarStoragePath,
   };
 }
 
@@ -166,6 +185,42 @@ export function parseCreateDirectConversationBody(
   }
 
   return { otherProjectMemberId: body.otherProjectMemberId.trim() };
+}
+
+export function parseProjectChatAvatarUploadUrlBody(
+  body: unknown,
+): { contentType: string } | undefined {
+  if (!isRecord(body) || typeof body.contentType !== "string") {
+    return undefined;
+  }
+
+  const contentType = body.contentType.trim().toLowerCase();
+  return isAllowedProjectChatAvatarContentType(contentType)
+    ? { contentType }
+    : undefined;
+}
+
+export function parseProjectChatAvatarCommitBody(
+  body: unknown,
+): { objectId: string; contentType: string } | undefined {
+  if (
+    !isRecord(body) ||
+    typeof body.objectId !== "string" ||
+    typeof body.contentType !== "string"
+  ) {
+    return undefined;
+  }
+
+  const objectId = body.objectId.trim().toLowerCase();
+  const contentType = body.contentType.trim().toLowerCase();
+  if (
+    !isProjectChatAvatarObjectId(objectId) ||
+    !isAllowedProjectChatAvatarContentType(contentType)
+  ) {
+    return undefined;
+  }
+
+  return { objectId, contentType };
 }
 
 export type CreateChatMessageBody = {

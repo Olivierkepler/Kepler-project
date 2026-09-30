@@ -7,8 +7,13 @@ import {
   View,
 } from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
-import { colors, typography } from "../../theme/colors";
+import SharePlanItemSheet, {
+  type SharePlanItemDestination,
+} from "../chat/SharePlanItemSheet";
+import type { RootStackParamList } from "../../navigation/types";
 import type { Delta } from "../../types/delta";
 import type { Measurement } from "../../types/measurement";
 import type { PlanItem } from "../../types/plan";
@@ -21,11 +26,22 @@ import {
 } from "../../utils/domain/planItemFieldContext";
 import { buildPlanItemAssignmentMaps } from "../../utils/domain/planItemAssignmentContext";
 import {
-  buildFilteredPlanWorkPackageGroups,
-  PLAN_LIST_FILTERS,
-  type PlanListFilter,
+  buildPlanWorkPackageGroups,
+  filterPlanItemsForListFilter,
 } from "../../utils/domain/planWorkPackageGroups";
+import {
+  resolveSharePlanItemDestination,
+  SharePlanItemFlowError,
+} from "../../utils/domain/sharePlanItemFlow";
 import PlanItemCard from "./PlanItemCard";
+import WorkPackageImage from "./WorkPackageImage";
+import PlanSearchFilterControls, {
+  type PlanAssignmentFilter,
+  type PlanStatusFilter,
+} from "./PlanSearchFilterControls";
+import { searchPlanWorkPackageGroups } from "../../utils/domain/planWorkPackageSearch";
+import { useAuth } from "../../auth/AuthProvider";
+import { colors, typography } from "../../theme/colors";
 
 export type ProjectPlanContentProps = {
   plannedItems: PlanItem[];
@@ -39,6 +55,7 @@ export type ProjectPlanContentProps = {
   measurements?: Measurement[];
   deltas?: Delta[];
   projectId?: string;
+  projectName?: string;
   profileByUserId?: ReadonlyMap<
     string,
     { displayName?: string | null; email?: string | null }
@@ -61,14 +78,28 @@ export default function ProjectPlanContent({
   measurements = [],
   deltas = [],
   projectId = "",
+  projectName = "Project",
   profileByUserId,
 }: ProjectPlanContentProps) {
+  const { user } = useAuth();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const isEmpty = plannedItems.length === 0;
   const canEdit = !isShared && typeof onOpenPlan === "function";
-  const [listFilter, setListFilter] = useState<PlanListFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<PlanStatusFilter>("all");
+  const [assignmentFilter, setAssignmentFilter] =
+    useState<PlanAssignmentFilter>("all");
+  const [searchText, setSearchText] = useState("");
   const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(
     () => new Set(),
   );
+  const [shareSheetVisible, setShareSheetVisible] = useState(false);
+  const [shareTarget, setShareTarget] = useState<{
+    id: string;
+    label: string;
+  } | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
 
   const emptyDescription = showAssignedScopeEmpty
     ? "No work has been assigned to you yet."
@@ -88,29 +119,42 @@ export default function ProjectPlanContent({
     [assignments, members, plannedItems, projectId, workPackages],
   );
 
-  const workPackageGroups = useMemo(
-    () =>
-      buildFilteredPlanWorkPackageGroups({
-        planItems: plannedItems,
-        workPackages,
-        assignments,
-        members,
-        projectId,
-        measurements,
-        filter: listFilter,
-        profileByUserId,
-      }),
-    [
-      assignments,
-      listFilter,
+  const workPackageGroups = useMemo(() => {
+    const statusMatchedItems = filterPlanItemsForListFilter({
+      planItems: plannedItems,
+      filter: statusFilter,
       measurements,
-      members,
-      plannedItems,
-      profileByUserId,
-      projectId,
+      assignmentByPlanItemId: assignmentMaps.byPlanItemId,
+    });
+    const visibleItems = filterPlanItemsForListFilter({
+      planItems: statusMatchedItems,
+      filter: assignmentFilter,
+      measurements,
+      assignmentByPlanItemId: assignmentMaps.byPlanItemId,
+    });
+    const groups = buildPlanWorkPackageGroups({
+      planItems: visibleItems,
       workPackages,
-    ],
-  );
+      assignments,
+      members,
+      projectId,
+      measurements,
+      profileByUserId,
+    });
+    return searchPlanWorkPackageGroups(groups, searchText, measurements);
+  }, [
+    assignmentFilter,
+    assignmentMaps.byPlanItemId,
+    assignments,
+    measurements,
+    members,
+    plannedItems,
+    profileByUserId,
+    projectId,
+    searchText,
+    statusFilter,
+    workPackages,
+  ]);
 
   const toggleGroupCollapsed = useCallback((groupKey: string) => {
     setCollapsedGroupKeys((current) => {
@@ -134,12 +178,87 @@ export default function ProjectPlanContent({
 
   const pendingCount = Math.max(plannedItems.length - measuredCount, 0);
 
+  const openShareSheet = useCallback(
+    (planItemId: string, planItemLabel: string) => {
+      setShareError(null);
+      setShareTarget({ id: planItemId, label: planItemLabel });
+      setShareSheetVisible(true);
+    },
+    [],
+  );
+
+  const closeShareSheet = useCallback(() => {
+    setShareSheetVisible(false);
+    setShareTarget(null);
+    setShareError(null);
+  }, []);
+
+  const handleShareDestination = useCallback(
+    async (destination: SharePlanItemDestination) => {
+      if (!user?.uid || !shareTarget || sharing || !projectId) {
+        return;
+      }
+
+      setSharing(true);
+      setShareError(null);
+
+      try {
+        const chatParams = await resolveSharePlanItemDestination({
+          ownerUid: user.uid,
+          projectId,
+          planItemId: shareTarget.id,
+          planItemLabel: shareTarget.label,
+          projectName,
+          isShared: true,
+          remoteProjectId: projectId,
+          remotePlanItemId: shareTarget.id,
+          destination,
+        });
+
+        closeShareSheet();
+        navigation.navigate("ProjectChat", chatParams);
+      } catch (err) {
+        setShareError(
+          err instanceof SharePlanItemFlowError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : "Unable to share Plan Item.",
+        );
+      } finally {
+        setSharing(false);
+      }
+    },
+    [
+      closeShareSheet,
+      navigation,
+      projectId,
+      projectName,
+      shareTarget,
+      sharing,
+      user?.uid,
+    ],
+  );
+
   return (
+    <View style={styles.wrapper}>
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
     >
+      <PlanSearchFilterControls
+        searchText={searchText}
+        onSearchTextChange={setSearchText}
+        statusFilter={statusFilter}
+        assignmentFilter={assignmentFilter}
+        allowUnassigned={!isShared}
+        onApply={(status, assignment) => {
+          setStatusFilter(status);
+          setAssignmentFilter(assignment);
+        }}
+      />
+
       <Text style={styles.eyebrow}>PROJECT PLAN</Text>
       <Text style={styles.title}>
         {isShared ? "Your assigned work" : "What the field is measured against."}
@@ -183,51 +302,25 @@ export default function ProjectPlanContent({
         <View style={styles.listBlock}>
           <Text style={styles.listHeading}>Work packages</Text>
 
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterRow}
-            accessibilityRole="tablist"
-          >
-            {PLAN_LIST_FILTERS.filter((filter) =>
-              isShared ? filter.id !== "unassigned" : true,
-            ).map((filter) => {
-              const selected = listFilter === filter.id;
-              return (
-                <Pressable
-                  key={filter.id}
-                  onPress={() => setListFilter(filter.id)}
-                  style={[
-                    styles.filterChip,
-                    selected && styles.filterChipSelected,
-                  ]}
-                  accessibilityRole="tab"
-                  accessibilityLabel={filter.label}
-                  accessibilityState={{ selected }}
-                >
-                  <Text
-                    style={[
-                      styles.filterChipText,
-                      selected && styles.filterChipTextSelected,
-                    ]}
-                  >
-                    {filter.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-
           {workPackageGroups.length === 0 ? (
-            <Text style={styles.emptyText}>
-              No plan items match this filter.
-            </Text>
+            <View style={styles.filteredEmpty}>
+              <Text style={styles.emptyText}>No matching plan items</Text>
+              <Text style={styles.filteredEmptyHint}>
+                Try adjusting your search or filters.
+              </Text>
+            </View>
           ) : (
             workPackageGroups.map((group) => {
               const collapsed = collapsedGroupKeys.has(group.key);
-              const itemCountLabel = `${group.items.length} ${
+              const itemCountLabel = `${group.items.length} plan ${
                 group.items.length === 1 ? "item" : "items"
               }`;
+              const assignmentLine = group.assignee.hasAssignee
+                ? group.assignee.nameLabel === "Assigned member" &&
+                  group.assignee.roleLabel.trim()
+                  ? `Assigned · ${group.assignee.roleLabel}`
+                  : `Assigned to ${group.assignee.nameLabel}`
+                : "Unassigned";
 
               return (
                 <View key={group.key} style={styles.packageGroup}>
@@ -235,34 +328,37 @@ export default function ProjectPlanContent({
                     onPress={() => toggleGroupCollapsed(group.key)}
                     style={styles.packageHeader}
                     accessibilityRole="button"
-                    accessibilityLabel={`${group.title}, ${itemCountLabel}, ${group.assignee.nameLabel}`}
+                    accessibilityLabel={`${group.title}, ${itemCountLabel}, ${assignmentLine}`}
                     accessibilityState={{ expanded: !collapsed }}
                   >
+                    <Ionicons
+                      name={collapsed ? "chevron-forward" : "chevron-down"}
+                      size={18}
+                      color="#667085"
+                    />
+                    <WorkPackageImage
+                      uri={
+                        group.workPackageId
+                          ? workPackages.find(
+                              (item) => item.id === group.workPackageId,
+                            )?.imageUrl
+                          : undefined
+                      }
+                      size={36}
+                      radius={9}
+                    />
                     <View style={styles.packageHeaderText}>
-                      <View style={styles.packageTitleRow}>
-                        <Text style={styles.packageTitle} numberOfLines={2}>
-                          {group.title}
-                        </Text>
-                        <Text style={styles.packageCount}>
-                          {itemCountLabel}
-                        </Text>
-                      </View>
-                      <Text style={styles.packageAssignee} numberOfLines={1}>
-                        {group.assignee.nameLabel}
+                      <Text style={styles.packageTitle} numberOfLines={2}>
+                        {group.title}
                       </Text>
-                      <Text style={styles.packageRole}>
-                        {group.assignee.roleLabel}
+                      <Text style={styles.packageAssignee} numberOfLines={2}>
+                        {itemCountLabel} · {assignmentLine}
                       </Text>
                       <Text style={styles.packageSummary}>
                         {group.measuredCount} measured · {group.pendingCount}{" "}
                         pending
                       </Text>
                     </View>
-                    <Ionicons
-                      name={collapsed ? "chevron-forward" : "chevron-down"}
-                      size={18}
-                      color="#98A2B3"
-                    />
                   </Pressable>
 
                   {!collapsed
@@ -281,11 +377,14 @@ export default function ProjectPlanContent({
                           assignment={
                             assignmentMaps.byPlanItemId.get(item.id) ?? null
                           }
-                          showAssignmentMeta={false}
-                          onPress={
+                          showAssignmentMeta
+                          onView={
                             onOpenPlanItem
                               ? () => onOpenPlanItem(item.id)
                               : undefined
+                          }
+                          onShare={() =>
+                            openShareSheet(item.id, item.label)
                           }
                           readOnly={isShared}
                           showDivider={index !== group.items.length - 1}
@@ -317,10 +416,31 @@ export default function ProjectPlanContent({
         </Text>
       ) : null}
     </ScrollView>
+
+    {shareError ? (
+      <View style={styles.shareErrorBanner}>
+        <Text style={styles.shareErrorText}>{shareError}</Text>
+      </View>
+    ) : null}
+
+    <SharePlanItemSheet
+      visible={shareSheetVisible}
+      remoteProjectId={projectId || null}
+      projectName={projectName}
+      planItemLabel={shareTarget?.label ?? ""}
+      onClose={closeShareSheet}
+      onSelect={(destination) => {
+        void handleShareDestination(destination);
+      }}
+    />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  wrapper: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -383,32 +503,15 @@ const styles = StyleSheet.create({
     color: colors.brand.navy,
     marginBottom: 12,
   },
-  filterRow: {
-    gap: 8,
-    paddingBottom: 12,
-    flexDirection: "row",
+  filteredEmpty: {
+    paddingVertical: 20,
     alignItems: "center",
   },
-  filterChip: {
-    minHeight: 34,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  filterChipSelected: {
-    borderColor: colors.brand.navy,
-    backgroundColor: "#F5F7FB",
-  },
-  filterChipText: {
+  filteredEmptyHint: {
     ...typography.caption,
     color: colors.text.muted,
-  },
-  filterChipTextSelected: {
-    color: colors.brand.navy,
+    marginTop: 4,
+    textAlign: "center",
   },
   packageGroup: {
     borderWidth: 1,
@@ -419,49 +522,32 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   packageHeader: {
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 10,
+    gap: 9,
     backgroundColor: "#FAFBFC",
   },
   packageHeaderText: {
     flex: 1,
     minWidth: 0,
   },
-  packageTitleRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 10,
-  },
   packageTitle: {
     ...typography.bodyMedium,
     color: colors.text.primary,
-    flex: 1,
     minWidth: 0,
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
-  },
-  packageCount: {
-    ...typography.caption,
-    color: colors.text.muted,
+    fontWeight: "700",
   },
   packageAssignee: {
-    ...typography.body,
-    color: colors.text.secondary,
-    marginTop: 6,
-  },
-  packageRole: {
     ...typography.caption,
-    color: colors.text.muted,
-    marginTop: 2,
+    color: colors.text.secondary,
+    marginTop: 3,
   },
   packageSummary: {
     ...typography.caption,
     color: colors.text.muted,
-    marginTop: 6,
+    marginTop: 2,
   },
   primaryButton: {
     marginTop: 20,
@@ -480,5 +566,22 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.text.secondary,
     marginTop: 20,
+  },
+  shareErrorBanner: {
+    position: "absolute",
+    left: 20,
+    right: 20,
+    bottom: 24,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: "rgba(227,24,55,0.08)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(227,24,55,0.18)",
+  },
+  shareErrorText: {
+    ...typography.caption,
+    color: colors.danger,
+    textAlign: "center",
   },
 });

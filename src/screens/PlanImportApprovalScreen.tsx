@@ -20,16 +20,18 @@ import {
   approveRemotePlanImport,
   getRemotePlanImport,
   getRemotePlanImportCandidates,
+  type RemotePlanItemSummary,
   type RemotePlanImportCandidate,
 } from "../services/api/planImports";
 import { setPlanItemCloudMapping } from "../store/planItemCloudMappings";
-import { addPlanItemsIfAbsent } from "../store/planItems";
+import { addPlanItemsIfAbsent, getPlanItemById } from "../store/planItems";
 import {
   getPlanImportById,
   updatePlanImport,
 } from "../store/planImports";
 import { typography } from "../theme/colors";
 import type { PlanItem } from "../types/plan";
+import { downloadPlanItemImage } from "../services/planItems/planItemImageLocal";
 import type { PlanImport } from "../types/planImport";
 import {
   formatCandidateType,
@@ -47,6 +49,43 @@ const TEXT_SECONDARY = "#667085";
 const TEXT_MUTED = "#98A2B3";
 const CARD_BACKGROUND = "rgba(255,255,255,0.80)";
 const BORDER = "rgba(1,33,105,0.08)";
+
+async function toLocalApprovedPlanItems(
+  remoteItems: RemotePlanItemSummary[],
+  ownerUid: string,
+  projectId: string,
+): Promise<PlanItem[]> {
+  return Promise.all(remoteItems.map(async (remote) => {
+    const local: PlanItem = {
+      id: remote.localPlanItemId,
+      projectId,
+      type: remote.type,
+      label: remote.label,
+      plannedValue: remote.plannedValue,
+      unit: remote.unit,
+      unitCost: remote.unitCost,
+      productionRatePerDay: remote.productionRatePerDay,
+      laborHoursPerUnit: remote.laborHoursPerUnit,
+      origin: remote.origin ?? "plan_import",
+      planImportId: remote.planImportId,
+      planImportCandidateId: remote.planImportCandidateId,
+    };
+    const existing = await getPlanItemById(ownerUid, remote.localPlanItemId);
+    if (!existing && remote.imageUrl?.trim()) {
+      try {
+        local.imageUri = await downloadPlanItemImage(
+          ownerUid,
+          projectId,
+          remote.localPlanItemId,
+          remote.imageUrl,
+        );
+      } catch {
+        // A signed image download failure does not fail Plan Item approval/import.
+      }
+    }
+    return local;
+  }));
+}
 
 /**
  * Phase 2P.5 — explicit confirmation → backend-authoritative PlanItems.
@@ -192,20 +231,11 @@ export default function PlanImportApprovalScreen({ route, navigation }: Props) {
         errorMessage: null,
       });
 
-      const localItems: PlanItem[] = result.planItems.map((remote) => ({
-        id: remote.localPlanItemId,
+      const localItems = await toLocalApprovedPlanItems(
+        result.planItems,
+        user.uid,
         projectId,
-        type: remote.type,
-        label: remote.label,
-        plannedValue: remote.plannedValue,
-        unit: remote.unit,
-        unitCost: remote.unitCost,
-        productionRatePerDay: remote.productionRatePerDay,
-        laborHoursPerUnit: remote.laborHoursPerUnit,
-        origin: remote.origin ?? "plan_import",
-        planImportId: remote.planImportId,
-        planImportCandidateId: remote.planImportCandidateId,
-      }));
+      );
 
       if (localItems.length > 0) {
         await addPlanItemsIfAbsent(user.uid, localItems);
@@ -241,20 +271,11 @@ export default function PlanImportApprovalScreen({ route, navigation }: Props) {
           status: "approved",
           errorMessage: null,
         });
-        const localItems: PlanItem[] = replay.planItems.map((remote) => ({
-          id: remote.localPlanItemId,
+        const localItems = await toLocalApprovedPlanItems(
+          replay.planItems,
+          user.uid,
           projectId,
-          type: remote.type,
-          label: remote.label,
-          plannedValue: remote.plannedValue,
-          unit: remote.unit,
-          unitCost: remote.unitCost,
-          productionRatePerDay: remote.productionRatePerDay,
-          laborHoursPerUnit: remote.laborHoursPerUnit,
-          origin: remote.origin ?? "plan_import",
-          planImportId: remote.planImportId,
-          planImportCandidateId: remote.planImportCandidateId,
-        }));
+        );
         if (localItems.length > 0) {
           await addPlanItemsIfAbsent(user.uid, localItems);
           for (const remote of replay.planItems) {

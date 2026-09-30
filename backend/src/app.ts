@@ -1,6 +1,7 @@
 import express from "express";
 
 import { requireAuth } from "./middleware/auth.js";
+import { keplerWebCors } from "./middleware/cors.js";
 import { agentRunsRouter } from "./routes/agentRuns.js";
 import { activityRouter } from "./routes/activity.js";
 import { deltasRouter } from "./routes/deltas.js";
@@ -21,6 +22,7 @@ import { workPackagesRouter } from "./routes/workPackages.js";
 
 export const app = express();
 
+app.use(keplerWebCors);
 app.use(express.json());
 
 app.get("/health", (_req, res) => {

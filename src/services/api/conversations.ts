@@ -56,6 +56,9 @@ function parseConversation(value: unknown): Conversation | null {
     id: record.id.trim(),
     projectId: record.projectId.trim(),
     type: record.type,
+    ...(isNonEmptyString(record.avatarUrl)
+      ? { avatarUrl: record.avatarUrl.trim() }
+      : {}),
     participantProjectMemberIds: record.participantProjectMemberIds
       .filter(isNonEmptyString)
       .map((item) => item.trim()),
@@ -176,6 +179,10 @@ function parseParticipant(
         : null,
     email:
       typeof record.email === "string" ? record.email.trim() || null : null,
+    avatarUrl:
+      typeof record.avatarUrl === "string" && record.avatarUrl.trim()
+        ? record.avatarUrl.trim()
+        : null,
   };
 }
 

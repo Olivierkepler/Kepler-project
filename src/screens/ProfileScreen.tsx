@@ -1,8 +1,9 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   ImageBackground,
   Modal,
   Pressable,
@@ -32,6 +33,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useAuth, UserDisplayNameSyncError } from "../auth/AuthProvider";
 
 import KeplerLogo from "../components/branding/KeplerLogo1";
+import UserAvatar from "../components/user/UserAvatar";
 
 import type {
   MainTabParamList,
@@ -63,6 +65,12 @@ import { getPendingMeasurementUploadsForUser } from "../store/measurementUploadS
 
 import {colors, typography} from "../theme/colors";
 import { updateSignedInUserDisplayName } from "../services/userProfile/userDisplayName";
+import { getOwnUserProfile } from "../services/api/userProfiles";
+import {
+  pickUserAvatarImage,
+  removeOwnUserAvatar,
+  uploadUserAvatarFromUri,
+} from "../services/userProfile/userAvatar";
 import {
   MAX_USER_DISPLAY_NAME_LENGTH,
   normalizeUserDisplayName,
@@ -251,6 +259,14 @@ export default function ProfileScreen({
   const [editNameOpen, setEditNameOpen] = useState(false);
   const [editNameValue, setEditNameValue] = useState("");
   const [savingName, setSavingName] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarRemoving, setAvatarRemoving] = useState(false);
+  const [avatarLoadError, setAvatarLoadError] = useState<string | null>(null);
+  const [avatarProfileRefreshing, setAvatarProfileRefreshing] = useState(false);
+  const appStateRef = useRef(AppState.currentState);
+  const avatarOperationGenerationRef = useRef(0);
 
   const displayName =
     user?.displayName?.trim() ||
@@ -268,6 +284,63 @@ export default function ProfileScreen({
     retryingDeltaUploads ||
     signingOut ||
     savingName;
+
+  const avatarBusy = avatarUploading || avatarRemoving;
+
+  const refreshProfileAvatar = useCallback(async (): Promise<boolean> => {
+    if (!user?.uid) {
+      setAvatarUrl(null);
+      setAvatarLoadError(null);
+      return false;
+    }
+
+    try {
+      const profile = await getOwnUserProfile();
+      setAvatarUrl(profile.avatarUrl);
+      setAvatarLoadError(null);
+      return true;
+    } catch {
+      setAvatarLoadError("Unable to load profile photo");
+      return false;
+    }
+  }, [user?.uid]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      async function loadProfileAvatar() {
+        if (!active) {
+          return;
+        }
+        await refreshProfileAvatar();
+      }
+
+      void loadProfileAvatar();
+
+      return () => {
+        active = false;
+      };
+    }, [refreshProfileAvatar]),
+  );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      const wasBackground =
+        appStateRef.current === "inactive" ||
+        appStateRef.current === "background";
+
+      if (wasBackground && nextState === "active" && user?.uid) {
+        void refreshProfileAvatar();
+      }
+
+      appStateRef.current = nextState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [refreshProfileAvatar, user?.uid]);
 
   useFocusEffect(
     useCallback(() => {
@@ -686,6 +759,111 @@ export default function ProfileScreen({
     setEditNameOpen(true);
   };
 
+  const openAvatarMenu = () => {
+    if (avatarBusy) {
+      return;
+    }
+    setAvatarMenuOpen(true);
+  };
+
+  const handleRetryProfileAvatar = async () => {
+    if (avatarProfileRefreshing) {
+      return;
+    }
+
+    setAvatarProfileRefreshing(true);
+    try {
+      await refreshProfileAvatar();
+    } finally {
+      setAvatarProfileRefreshing(false);
+    }
+  };
+
+  const handleChooseAvatar = async () => {
+    setAvatarMenuOpen(false);
+    if (avatarBusy) {
+      return;
+    }
+
+    let picked: Awaited<ReturnType<typeof pickUserAvatarImage>>;
+    try {
+      picked = await pickUserAvatarImage();
+    } catch (err) {
+      Alert.alert(
+        "Unable to update photo",
+        err instanceof Error
+          ? err.message
+          : "Your profile photo could not be updated.",
+      );
+      return;
+    }
+
+    if (!picked) {
+      return;
+    }
+
+    const operationGeneration = avatarOperationGenerationRef.current + 1;
+    avatarOperationGenerationRef.current = operationGeneration;
+    setAvatarUploading(true);
+
+    try {
+      const profile = await uploadUserAvatarFromUri(picked);
+      if (operationGeneration !== avatarOperationGenerationRef.current) {
+        return;
+      }
+      setAvatarUrl(profile.avatarUrl);
+      setAvatarLoadError(null);
+    } catch (err) {
+      if (operationGeneration !== avatarOperationGenerationRef.current) {
+        return;
+      }
+      Alert.alert(
+        "Unable to update photo",
+        err instanceof Error
+          ? err.message
+          : "Your profile photo could not be updated.",
+      );
+    } finally {
+      if (operationGeneration === avatarOperationGenerationRef.current) {
+        setAvatarUploading(false);
+      }
+    }
+  };
+
+  const handleRemoveAvatar = async () => {
+    setAvatarMenuOpen(false);
+    if (avatarBusy || !avatarUrl) {
+      return;
+    }
+
+    const operationGeneration = avatarOperationGenerationRef.current + 1;
+    avatarOperationGenerationRef.current = operationGeneration;
+    setAvatarRemoving(true);
+
+    try {
+      const profile = await removeOwnUserAvatar();
+      if (operationGeneration !== avatarOperationGenerationRef.current) {
+        return;
+      }
+      setAvatarUrl(profile.avatarUrl);
+      setAvatarLoadError(null);
+    } catch (err) {
+      if (operationGeneration !== avatarOperationGenerationRef.current) {
+        return;
+      }
+      Alert.alert(
+        "Unable to remove photo",
+        err instanceof Error
+          ? err.message
+          : "Your profile photo could not be removed.",
+      );
+    } finally {
+      if (operationGeneration === avatarOperationGenerationRef.current) {
+        setAvatarRemoving(false);
+      }
+    }
+  };
+
   const handleSaveName = async () => {
     const normalized = normalizeUserDisplayName(editNameValue);
 
@@ -721,13 +899,12 @@ export default function ProfileScreen({
 
 
         <View style={styles.stickyHeader}>
-          <View style={[styles.headerLogoWrap, { marginBottom: 16, alignItems: "center" }]}>
+          <View style={styles.headerLogoWrap}>
             <KeplerLogo
               width={100}
               height={40}
             />
           </View>
-    
 
           <View style={styles.accountContent}>
             <Text style={styles.cardEyebrow}>
@@ -799,6 +976,61 @@ export default function ProfileScreen({
           <Text style={[styles.sectionTitle, styles.sectionTitleFirst]}>
             PROFILE
           </Text>
+
+          <View style={styles.profileIdentityCard}>
+            <Pressable
+              onPress={openAvatarMenu}
+              disabled={avatarBusy}
+              accessibilityRole="button"
+              accessibilityLabel="Change profile photo"
+              style={({ pressed }) => [
+                styles.avatarButton,
+                pressed && !avatarBusy && styles.avatarButtonPressed,
+              ]}
+            >
+              <UserAvatar
+                imageUrl={avatarUrl}
+                size={88}
+                loading={avatarBusy}
+              />
+              <View style={styles.avatarEditBadge}>
+                <Ionicons name="camera-outline" size={16} color={KEPLER_NAVY} />
+              </View>
+            </Pressable>
+
+            <Text style={styles.profileIdentityName} numberOfLines={2}>
+              {displayName}
+            </Text>
+            <Text style={styles.profileIdentityEmail} numberOfLines={1}>
+              {user?.email ?? "Unknown email"}
+            </Text>
+
+            {avatarLoadError ? (
+              <View style={styles.avatarLoadErrorRow}>
+                <Text style={styles.avatarLoadErrorText}>{avatarLoadError}</Text>
+                <Pressable
+                  onPress={() => {
+                    void handleRetryProfileAvatar();
+                  }}
+                  disabled={avatarProfileRefreshing}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry loading profile photo"
+                  hitSlop={8}
+                  style={({ pressed }) => [
+                    styles.avatarRetryButton,
+                    pressed && !avatarProfileRefreshing && styles.avatarRetryButtonPressed,
+                    avatarProfileRefreshing && styles.buttonDisabled,
+                  ]}
+                >
+                  {avatarProfileRefreshing ? (
+                    <ActivityIndicator size="small" color={KEPLER_NAVY} />
+                  ) : (
+                    <Text style={styles.avatarRetryText}>Retry</Text>
+                  )}
+                </Pressable>
+              </View>
+            ) : null}
+          </View>
 
           <View style={styles.groupCard}>
             <BrandAccent />
@@ -1108,6 +1340,74 @@ export default function ProfileScreen({
             </View>
           </ImageBackground>
         </Modal>
+
+        <Modal
+          visible={avatarMenuOpen}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setAvatarMenuOpen(false)}
+        >
+          <Pressable
+            style={styles.avatarMenuBackdrop}
+            onPress={() => setAvatarMenuOpen(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Close profile photo options"
+          >
+            <Pressable
+              style={styles.avatarMenuSheet}
+              onPress={(event) => event.stopPropagation()}
+            >
+              <Pressable
+                onPress={() => {
+                  void handleChooseAvatar();
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Choose photo"
+                style={({ pressed }) => [
+                  styles.avatarMenuRow,
+                  pressed && styles.avatarMenuRowPressed,
+                ]}
+              >
+                <Text style={styles.avatarMenuRowText}>Choose photo</Text>
+              </Pressable>
+
+              {avatarUrl ? (
+                <>
+                  <View style={styles.avatarMenuSeparator} />
+                  <Pressable
+                    onPress={() => {
+                      void handleRemoveAvatar();
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Remove current photo"
+                    style={({ pressed }) => [
+                      styles.avatarMenuRow,
+                      pressed && styles.avatarMenuRowPressed,
+                    ]}
+                  >
+                    <Text style={styles.avatarMenuRowDangerText}>
+                      Remove current photo
+                    </Text>
+                  </Pressable>
+                </>
+              ) : null}
+
+              <View style={styles.avatarMenuSeparator} />
+
+              <Pressable
+                onPress={() => setAvatarMenuOpen(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+                style={({ pressed }) => [
+                  styles.avatarMenuRow,
+                  pressed && styles.avatarMenuRowPressed,
+                ]}
+              >
+                <Text style={styles.avatarMenuCancelText}>Cancel</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
       </ImageBackground>
     </SafeAreaView>
   );
@@ -1382,6 +1682,148 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     backgroundColor: "transparent",
+  },
+
+  profileIdentityCard: {
+    marginHorizontal: 20,
+    marginTop: 10,
+    marginBottom: 4,
+    alignItems: "center",
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    borderRadius: 19,
+    backgroundColor: "rgba(255,255,255,0.73)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(15,23,42,0.08)",
+  },
+
+  avatarButton: {
+    width: 88,
+    height: 88,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  avatarButtonPressed: {
+    opacity: 0.92,
+  },
+
+  avatarEditBadge: {
+    position: "absolute",
+    right: -2,
+    bottom: -2,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.96)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(1, 33, 105, 0.12)",
+  },
+
+  profileIdentityName: {
+    ...typography.bodyMedium,
+    marginTop: 14,
+    color: "#101828",
+    fontWeight: "700",
+    fontSize: 18,
+    textAlign: "center",
+  },
+
+  profileIdentityEmail: {
+    ...typography.caption,
+    marginTop: 4,
+    color: "#667085",
+    fontSize: 13,
+    textAlign: "center",
+  },
+
+  avatarLoadErrorRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+
+  avatarLoadErrorText: {
+    ...typography.caption,
+    color: "#667085",
+    fontSize: 12,
+    textAlign: "center",
+  },
+
+  avatarRetryButton: {
+    minHeight: 28,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(1, 33, 105, 0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  avatarRetryButtonPressed: {
+    opacity: 0.82,
+  },
+
+  avatarRetryText: {
+    ...typography.caption,
+    color: KEPLER_NAVY,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+
+  avatarMenuBackdrop: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(15, 23, 42, 0.28)",
+    paddingHorizontal: 12,
+    paddingBottom: 24,
+  },
+
+  avatarMenuSheet: {
+    borderRadius: 16,
+    overflow: "hidden",
+    backgroundColor: "rgba(255,255,255,0.98)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(15,23,42,0.08)",
+  },
+
+  avatarMenuRow: {
+    minHeight: 54,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+
+  avatarMenuRowPressed: {
+    backgroundColor: "rgba(15,23,42,0.04)",
+  },
+
+  avatarMenuRowText: {
+    ...typography.bodyMedium,
+    color: KEPLER_NAVY,
+    fontWeight: "600",
+  },
+
+  avatarMenuRowDangerText: {
+    ...typography.bodyMedium,
+    color: colors.danger,
+    fontWeight: "600",
+  },
+
+  avatarMenuCancelText: {
+    ...typography.bodyMedium,
+    color: "#667085",
+    fontWeight: "600",
+  },
+
+  avatarMenuSeparator: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "rgba(15,23,42,0.08)",
   },
 
   identityLabel: {

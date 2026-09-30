@@ -1,6 +1,7 @@
 import { COLLECTIONS } from "../config/collections.js";
 import { db } from "../config/firestore.js";
 import type { PlanItem } from "../domain/planItem.js";
+import { parsePlanItemDocument } from "../validation/planItem.js";
 
 function requireId(id: string, label: string): void {
   if (!id || id.trim().length === 0) {
@@ -22,7 +23,7 @@ export async function getPlanItemById(
     return undefined;
   }
 
-  return snapshot.data() as PlanItem;
+  return parsePlanItemDocument(snapshot.data()) ?? undefined;
 }
 
 export async function getPlanItemsForProject(
@@ -35,7 +36,57 @@ export async function getPlanItemsForProject(
     .where("projectId", "==", projectId)
     .get();
 
-  return snapshot.docs.map((doc) => doc.data() as PlanItem);
+  return snapshot.docs
+    .map((doc) => parsePlanItemDocument(doc.data()))
+    .filter((item): item is PlanItem => item !== null);
+}
+
+export type PlanItemImagePathUpdate = {
+  planItem: PlanItem;
+  previousImageStoragePath: string | null;
+};
+
+/** Atomically changes only the private image path for the matching project item. */
+export async function updatePlanItemImageStoragePath(input: {
+  projectId: string;
+  planItemId: string;
+  imageStoragePath: string | null;
+}): Promise<PlanItemImagePathUpdate | undefined> {
+  requireId(input.projectId, "projectId");
+  requireId(input.planItemId, "planItemId");
+
+  const reference = db
+    .collection(COLLECTIONS.planItems)
+    .doc(input.planItemId);
+  let result: PlanItemImagePathUpdate | undefined;
+
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(reference);
+    if (!snapshot.exists) {
+      return;
+    }
+
+    const existing = parsePlanItemDocument(snapshot.data());
+    if (!existing || existing.projectId !== input.projectId) {
+      return;
+    }
+
+    const previousImageStoragePath =
+      existing.imageStoragePath?.trim() || null;
+    transaction.update(reference, {
+      imageStoragePath: input.imageStoragePath,
+    });
+
+    result = {
+      planItem: {
+        ...existing,
+        imageStoragePath: input.imageStoragePath,
+      },
+      previousImageStoragePath,
+    };
+  });
+
+  return result;
 }
 
 /**

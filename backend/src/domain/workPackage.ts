@@ -30,6 +30,8 @@ export type WorkPackage = {
   status: WorkPackageStatus;
   /** Canonical cloud PlanItem ids (may be empty). */
   planItemIds: string[];
+  /** Private Firebase Storage path; never include in API presentations. */
+  imageStoragePath?: string | null;
   createdAt: string;
   updatedAt: string;
 };

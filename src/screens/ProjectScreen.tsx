@@ -1,5 +1,6 @@
 import React, {
   useCallback,
+  useEffect,
   useState,
 } from "react";
 
@@ -31,6 +32,7 @@ import { useAuth } from "../auth/AuthProvider";
 
 import ProjectPlan from "../components/project/ProjectPlan";
 import ProjectPlanContent from "../components/project/ProjectPlanContent";
+import ProjectProgressManagementModal from "../components/project/ProjectProgressManagementModal";
 import ProjectTeamContent from "../components/project/ProjectTeamContent";
 import WorkPackagesSection from "../components/project/WorkPackagesSection";
 import WorkProgressContent from "../components/project/WorkProgressContent";
@@ -186,6 +188,19 @@ function formatMembershipRoleLabel(
   }
 }
 
+function projectStatusLabel(status: Project["status"]): string {
+  switch (status) {
+    case "active":
+      return "Active";
+    case "planning":
+      return "Planning";
+    case "on-hold":
+      return "On hold";
+    case "completed":
+      return "Completed";
+  }
+}
+
 function isAssignedScopeRole(
   role:
     | ProjectMemberRole
@@ -298,47 +313,35 @@ type GlassIconButtonProps = {
   >["name"];
   onPress: () => void;
   accessibilityLabel: string;
+  label?: string;
 };
 
 function GlassIconButton({
   iconName,
   onPress,
   accessibilityLabel,
+  label,
 }: GlassIconButtonProps) {
   return (
-    <BlurView
-      intensity={35}
-      tint="light"
-      style={
-        styles.glassButtonOuter
-      }
+    <Pressable
+      style={({ pressed }) => [
+        styles.projectsBackButton,
+        pressed && styles.glassButtonPressed,
+      ]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      hitSlop={8}
     >
-      <View
-        pointerEvents="none"
-        style={
-          styles.glassButtonHighlight
-        }
-      />
-
-      <Pressable
-        style={({ pressed }) => [
-          styles.glassButtonInner,
-          pressed &&
-            styles.glassButtonPressed,
-        ]}
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={
-          accessibilityLabel
-        }
-      >
         <Ionicons
           name={iconName}
           size={18}
-          color={GRAPHITE}
+          color={KEPLER_NAVY}
         />
-      </Pressable>
-    </BlurView>
+        {label ? (
+          <Text style={styles.projectsBackText}>{label}</Text>
+        ) : null}
+    </Pressable>
   );
 }
 
@@ -502,31 +505,32 @@ type ProjectTabsProps = {
 const PROJECT_TAB_ITEMS: {
   id: ProjectTab;
   label: string;
+  icon: React.ComponentProps<typeof Ionicons>["name"];
   accessibilityLabel: string;
-  wide?: boolean;
 }[] = [
   {
     id: "plan",
     label: "Plan",
+    icon: "document-text-outline",
     accessibilityLabel: "Plan",
   },
   {
     id: "team",
     label: "Team",
+    icon: "people-outline",
     accessibilityLabel: "Project team",
   },
   {
     id: "project",
-    label: "Project",
-    accessibilityLabel: "Project",
+    label: "Activity",
+    icon: "time-outline",
+    accessibilityLabel: "Activity",
   },
-  
-  
   {
     id: "workProgress",
-    label: "Work Progress",
-    accessibilityLabel: "Work progress",
-    wide: true,
+    label: "Progress",
+    icon: "bar-chart-outline",
+    accessibilityLabel: "Progress",
   },
 ];
 
@@ -552,24 +556,28 @@ function ProjectTabs({
         return (
           <Pressable
             key={tab.id}
-            style={[
-              styles.tabButton,
-              tab.wide ? styles.workProgressTab : null,
-            ]}
+            style={styles.tabButton}
             onPress={handlers[tab.id]}
             accessibilityRole="tab"
             accessibilityState={{ selected }}
             accessibilityLabel={tab.accessibilityLabel}
           >
-            <Text
-              numberOfLines={1}
-              style={[
-                styles.tabText,
-                selected && styles.tabTextActive,
-              ]}
-            >
-              {tab.label}
-            </Text>
+            <View style={styles.tabLabelRow}>
+              <Ionicons
+                name={tab.icon}
+                size={16}
+                color={selected ? colors.text.primary : colors.text.muted}
+              />
+              <Text
+                numberOfLines={1}
+                style={[
+                  styles.tabText,
+                  selected && styles.tabTextActive,
+                ]}
+              >
+                {tab.label}
+              </Text>
+            </View>
 
             {selected ? (
               <View style={styles.tabIndicator} />
@@ -619,6 +627,44 @@ export default function ProjectScreen({
     | null
     | undefined
   >(undefined);
+  const [failedProjectAvatarUri, setFailedProjectAvatarUri] = useState<
+    string | null
+  >(null);
+  const [progressManagementVisible, setProgressManagementVisible] =
+    useState(false);
+  const [progressRemoteProjectId, setProgressRemoteProjectId] = useState<
+    string | null | undefined
+  >(undefined);
+  const [progressMappingFailed, setProgressMappingFailed] = useState(false);
+
+  useEffect(() => {
+    if (!progressManagementVisible) return;
+
+    let active = true;
+    if (!user?.uid) {
+      setProgressRemoteProjectId(null);
+      setProgressMappingFailed(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    void getRemoteProjectId(user.uid, projectId)
+      .then((remoteProjectId) => {
+        if (!active) return;
+        setProgressRemoteProjectId(remoteProjectId ?? null);
+        setProgressMappingFailed(false);
+      })
+      .catch(() => {
+        if (!active) return;
+        setProgressRemoteProjectId(null);
+        setProgressMappingFailed(true);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [progressManagementVisible, projectId, user?.uid]);
 
   const [
     plannedItems,
@@ -1217,27 +1263,80 @@ export default function ProjectScreen({
         {/* --------------------------------------------------------------- */}
 
         <View style={styles.topBar}>
-          <GlassIconButton
-            iconName="arrow-back"
-            onPress={() =>
-              navigation.navigate(
-                "MainTabs",
-              )
-            }
-            accessibilityLabel="Go back"
-          />
+          <View style={styles.topNavigationBar}>
+            <GlassIconButton
+              iconName="chevron-back"
+              label="Projects"
+              onPress={() =>
+                navigation.navigate(
+                  "MainTabs",
+                )
+              }
+              accessibilityLabel="Go back to projects"
+            />
 
-          <View
-            style={
-              styles.projectIdentity
-            }
-          >
+            <View style={styles.headerActions}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.headerIconButton,
+                  pressed && styles.glassButtonPressed,
+                ]}
+                onPress={() => navigation.navigate("Notifications")}
+                accessibilityRole="button"
+                accessibilityLabel="Notifications"
+                hitSlop={8}
+              >
+                <Ionicons
+                  name="notifications-outline"
+                  size={20}
+                  color={KEPLER_NAVY}
+                />
+              </Pressable>
+
+              {!isShared ? (
+                <BlurView
+                  intensity={35}
+                  tint="light"
+                  style={styles.glassButtonOuter}
+                >
+                  <View
+                    pointerEvents="none"
+                    style={styles.glassButtonHighlight}
+                  />
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.glassEditButton,
+                      pressed && styles.glassButtonPressed,
+                    ]}
+                    onPress={() =>
+                      navigation.navigate("EditProject", {
+                        projectId: project.id,
+                      })
+                    }
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit project."
+                  >
+                    <Ionicons
+                      name="create-outline"
+                      size={16}
+                      color={GRAPHITE}
+                    />
+                    <Text style={styles.glassEditButtonText}>Edit</Text>
+                  </Pressable>
+                </BlurView>
+              ) : null}
+            </View>
+          </View>
+
+          <View style={styles.projectIdentity}>
             <View
               style={
                 styles.projectAvatarWrap
               }
             >
-              {project.avatarUri ? (
+              {project.avatarUri &&
+              failedProjectAvatarUri !== project.avatarUri ? (
                 <Image
                   source={{
                     uri: project.avatarUri,
@@ -1247,6 +1346,9 @@ export default function ProjectScreen({
                   }
                   resizeMode="cover"
                   accessibilityIgnoresInvertColors
+                  onError={() =>
+                    setFailedProjectAvatarUri(project.avatarUri ?? null)
+                  }
                 />
               ) : (
                 <View
@@ -1274,94 +1376,47 @@ export default function ProjectScreen({
                 style={
                   styles.topBarTitle
                 }
-                numberOfLines={1}
+                numberOfLines={2}
                 ellipsizeMode="tail"
               >
                 {project.name}
               </Text>
 
-              <Text
-                style={
-                  styles.topBarLocation
-                }
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {project.location}
-              </Text>
+              {project.location?.trim() ? (
+                <View style={styles.topBarLocationRow}>
+                  <Ionicons
+                    name="location-outline"
+                    size={13}
+                    color={colors.text.secondary}
+                  />
+                  <Text
+                    style={styles.topBarLocation}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    {project.location}
+                  </Text>
+                </View>
+              ) : null}
+
+              {project.status ? (
+                <View style={styles.projectStatusPill}>
+                  <View style={styles.projectStatusDot} />
+                  <Text style={styles.projectStatusText}>
+                    {projectStatusLabel(project.status)}
+                  </Text>
+                </View>
+              ) : null}
+
+              {isShared ? (
+                <Text style={styles.sharedMeta}>
+                  Shared project
+                  {sharedRoleLabel ? ` · ${sharedRoleLabel}` : ""}
+                </Text>
+              ) : null}
             </View>
           </View>
 
-          <View
-            style={
-              styles.topBarRight
-            }
-          >
-            {isShared ? (
-              <Text
-                style={
-                  styles.sharedMeta
-                }
-              >
-                Shared project
-                {sharedRoleLabel
-                  ? ` · ${sharedRoleLabel}`
-                  : ""}
-              </Text>
-            ) : (
-              <BlurView
-                intensity={35}
-                tint="light"
-                style={
-                  styles.glassButtonOuter
-                }
-              >
-                <View
-                  pointerEvents="none"
-                  style={
-                    styles.glassButtonHighlight
-                  }
-                />
-
-                <Pressable
-                  style={({
-                    pressed,
-                  }) => [
-                    styles.glassEditButton,
-                    pressed &&
-                      styles.glassButtonPressed,
-                  ]}
-                  onPress={() =>
-                    navigation.navigate(
-                      "EditProject",
-                      {
-                        projectId:
-                          project.id,
-                      },
-                    )
-                  }
-                  accessibilityRole="button"
-                  accessibilityLabel="Edit project."
-                >
-                  <Ionicons
-                    name="create-outline"
-                    size={16}
-                    color={
-                      GRAPHITE
-                    }
-                  />
-
-                  <Text
-                    style={
-                      styles.glassEditButtonText
-                    }
-                  >
-                    Edit
-                  </Text>
-                </Pressable>
-              </BlurView>
-            )}
-          </View>
         </View>
    
 
@@ -1412,6 +1467,7 @@ export default function ProjectScreen({
                 showAssignedScopeEmpty
               }
               projectId={project.id}
+              projectName={project.name}
               workPackages={sharedWorkPackages}
               assignments={sharedAssignments}
               members={[]}
@@ -1625,6 +1681,40 @@ export default function ProjectScreen({
               </Text>
             </View>
           </View>
+
+          {!isShared && user?.uid ? (
+            <Pressable
+              style={styles.progressManagementAction}
+              onPress={() => {
+                setProgressRemoteProjectId(undefined);
+                setProgressMappingFailed(false);
+                setProgressManagementVisible(true);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Manage project progress data"
+            >
+              <View style={styles.progressManagementIcon}>
+                <Ionicons
+                  name="trending-up-outline"
+                  size={18}
+                  color={colors.brand.navy}
+                />
+              </View>
+              <View style={styles.progressManagementCopy}>
+                <Text style={styles.progressManagementTitle}>
+                  Project progress data
+                </Text>
+                <Text style={styles.progressManagementDescription}>
+                  Manage planned baseline and actual snapshots
+                </Text>
+              </View>
+              <Ionicons
+                name="chevron-forward"
+                size={18}
+                color={colors.text.muted}
+              />
+            </Pressable>
+          ) : null}
 
 
           <Text
@@ -2621,6 +2711,14 @@ export default function ProjectScreen({
       </ScrollView>
         ) : null}
       </View>
+      {!isShared && user?.uid ? (
+        <ProjectProgressManagementModal
+          remoteProjectId={progressRemoteProjectId}
+          mappingError={progressMappingFailed}
+          visible={progressManagementVisible}
+          onClose={() => setProgressManagementVisible(false)}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -2662,38 +2760,69 @@ const styles =
     /* ---------------------------------------------------------------------- */
 
     topBar: {
+      flexDirection: "column",
+      alignItems: "stretch",
+      paddingTop: 18,
+      paddingBottom: 8,
+      gap: 12,
+    },
+
+    topNavigationBar: {
       flexDirection: "row",
       alignItems: "center",
-      justifyContent:
-        "space-between",
-      paddingTop: 16,
-      gap: 8,
+      justifyContent: "space-between",
+      minHeight: 42,
+    },
+
+    projectsBackButton: {
+      minHeight: 42,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 2,
+      paddingRight: 8,
+    },
+
+    projectsBackText: {
+      ...typography.bodyMedium,
+      color: KEPLER_NAVY,
+    },
+
+    headerActions: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+    },
+
+    headerIconButton: {
+      width: 36,
+      height: 36,
+      alignItems: "center",
+      justifyContent: "center",
     },
 
     projectIdentity: {
-      flex: 1,
       minWidth: 0,
       flexDirection: "row",
-      alignItems: "center",
+      alignItems: "flex-start",
       gap: 12,
     },
 
     projectAvatarWrap: {
-      width: 52,
-      height: 52,
+      width: 76,
+      height: 76,
       flexShrink: 0,
     },
 
     projectAvatar: {
       width: "100%",
       height: "100%",
-      borderRadius: 10,
+      borderRadius: 14,
     },
 
     projectAvatarFallback: {
       width: "100%",
       height: "100%",
-      borderRadius: 10,
+      borderRadius: 14,
       alignItems: "center",
       justifyContent: "center",
       backgroundColor: "rgba(1,33,105,0.06)",
@@ -2717,7 +2846,8 @@ const styles =
       minWidth: 42,
       flexShrink: 0,
       alignItems: "flex-end",
-      justifyContent: "center",
+      justifyContent: "flex-start",
+      paddingTop: 2,
     },
 
     glassButtonOuter: {
@@ -2808,18 +2938,55 @@ const styles =
     },
 
     topBarTitle: {
-      ...typography.bodyMedium,
+      ...typography.title,
+      fontSize: 19,
+      lineHeight: 24,
       color:
         colors.text.primary,
       textAlign: "left",
+    },
+
+    topBarLocationRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 3,
+      marginTop: 3,
+      minWidth: 0,
     },
 
     topBarLocation: {
       ...typography.caption,
       color:
         colors.text.secondary,
-      marginTop: 2,
       textAlign: "left",
+      flexShrink: 1,
+    },
+
+    projectStatusPill: {
+      alignSelf: "flex-start",
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      marginTop: 7,
+      paddingHorizontal: 9,
+      paddingVertical: 4,
+      borderRadius: 999,
+      backgroundColor: "#F2F4F7",
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+
+    projectStatusDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: colors.brand.blue,
+    },
+
+    projectStatusText: {
+      ...typography.caption,
+      color: colors.text.secondary,
+      lineHeight: 16,
     },
 
     topBarPlaceholder: {
@@ -2855,7 +3022,7 @@ const styles =
 
     sharedMeta: {
       ...typography.caption,
-      marginTop: 10,
+      marginTop: 5,
       color:
         colors.text.secondary,
     },
@@ -2912,7 +3079,7 @@ const styles =
     /* ---------------------------------------------------------------------- */
 
     tabsContainer: {
-      marginTop: 24,
+      marginTop: 0,
 
       minHeight: 48,
 
@@ -2942,8 +3109,12 @@ const styles =
       paddingHorizontal: 4,
     },
 
-    workProgressTab: {
-      flex: 1.25,
+    tabLabelRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 5,
+      maxWidth: "100%",
     },
 
     tabText: {
@@ -2951,6 +3122,7 @@ const styles =
       color:
         colors.text.muted,
       textAlign: "center",
+      flexShrink: 1,
     },
 
     tabTextActive: {
@@ -3331,6 +3503,44 @@ const styles =
         "space-between",
       paddingBottom: 8,
       marginTop: 8,
+    },
+
+    progressManagementAction: {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderWidth: 1,
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      marginTop: 12,
+      marginBottom: 12,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+    },
+
+    progressManagementIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: 10,
+      backgroundColor: "#F2F4F7",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+
+    progressManagementCopy: {
+      flex: 1,
+    },
+
+    progressManagementTitle: {
+      ...typography.bodyMedium,
+      color: colors.text.primary,
+    },
+
+    progressManagementDescription: {
+      ...typography.caption,
+      color: colors.text.secondary,
+      marginTop: 2,
     },
 
     action: {

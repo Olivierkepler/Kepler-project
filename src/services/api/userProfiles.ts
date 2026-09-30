@@ -48,6 +48,10 @@ function parseUserProfile(value: unknown): UserProfile | null {
       typeof record.createdAt === "string" ? record.createdAt.trim() : null,
     updatedAt:
       typeof record.updatedAt === "string" ? record.updatedAt.trim() : null,
+    avatarUrl:
+      typeof record.avatarUrl === "string" && record.avatarUrl.trim()
+        ? record.avatarUrl.trim()
+        : null,
   };
 }
 
@@ -161,4 +165,154 @@ export async function getUserProfilesForUids(
   return payload
     .map((item) => parseUserProfile(item))
     .filter((item): item is UserProfile => item !== null);
+}
+
+export type UserAvatarUploadUrlResponse = {
+  uploadUrl: string;
+  objectPath: string;
+  contentType: string;
+  expiresAt: string;
+};
+
+function parseUserAvatarUploadUrlResponse(
+  value: unknown,
+): UserAvatarUploadUrlResponse | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  if (
+    !isNonEmptyString(record.uploadUrl) ||
+    !isNonEmptyString(record.objectPath) ||
+    !isNonEmptyString(record.contentType) ||
+    !isNonEmptyString(record.expiresAt)
+  ) {
+    return null;
+  }
+
+  return {
+    uploadUrl: record.uploadUrl.trim(),
+    objectPath: record.objectPath.trim(),
+    contentType: record.contentType.trim(),
+    expiresAt: record.expiresAt.trim(),
+  };
+}
+
+export async function requestUserAvatarUploadUrl(input: {
+  contentType: string;
+  signal?: AbortSignal;
+}): Promise<UserAvatarUploadUrlResponse> {
+  let response: Response;
+
+  try {
+    response = await authenticatedFetch("/api/me/profile/avatar/upload-url", {
+      method: "POST",
+      body: JSON.stringify({
+        contentType: input.contentType.trim(),
+      }),
+      signal: input.signal,
+    });
+  } catch (error) {
+    mapAuthFetchError(error);
+  }
+
+  const payload = await readJson(response);
+
+  if (response.status === 401) {
+    throw new Error("Your session could not be authenticated.");
+  }
+
+  if (response.status === 400) {
+    throw new Error(parseErrorMessage(payload, "Invalid avatar upload request."));
+  }
+
+  if (!response.ok) {
+    throw new Error("Unable to reach the authenticated API.");
+  }
+
+  const parsed = parseUserAvatarUploadUrlResponse(payload);
+
+  if (!parsed) {
+    throw new Error("Unable to reach the authenticated API.");
+  }
+
+  return parsed;
+}
+
+export async function commitUserAvatar(input: {
+  objectPath: string;
+  contentType: string;
+  signal?: AbortSignal;
+}): Promise<UserProfile> {
+  let response: Response;
+
+  try {
+    response = await authenticatedFetch("/api/me/profile/avatar", {
+      method: "PUT",
+      body: JSON.stringify({
+        objectPath: input.objectPath.trim(),
+        contentType: input.contentType.trim(),
+      }),
+      signal: input.signal,
+    });
+  } catch (error) {
+    mapAuthFetchError(error);
+  }
+
+  const payload = await readJson(response);
+
+  if (response.status === 401) {
+    throw new Error("Your session could not be authenticated.");
+  }
+
+  if (response.status === 400) {
+    throw new Error(parseErrorMessage(payload, "Invalid avatar upload."));
+  }
+
+  if (!response.ok) {
+    throw new Error("Unable to reach the authenticated API.");
+  }
+
+  const parsed = parseUserProfile(payload);
+
+  if (!parsed) {
+    throw new Error("Unable to reach the authenticated API.");
+  }
+
+  return parsed;
+}
+
+export async function removeUserAvatar(
+  signal?: AbortSignal,
+): Promise<UserProfile> {
+  let response: Response;
+
+  try {
+    response = await authenticatedFetch("/api/me/profile/avatar", {
+      method: "DELETE",
+      signal,
+    });
+  } catch (error) {
+    mapAuthFetchError(error);
+  }
+
+  const payload = await readJson(response);
+
+  if (response.status === 401) {
+    throw new Error("Your session could not be authenticated.");
+  }
+
+  if (!response.ok) {
+    throw new Error("Unable to reach the authenticated API.");
+  }
+
+  const parsed = parseUserProfile(payload);
+
+  if (!parsed) {
+    throw new Error("Unable to reach the authenticated API.");
+  }
+
+  return parsed;
 }

@@ -57,6 +57,7 @@ function toDisplayPlanItem(remote: RemotePlanItem): PlanItem {
     unitCost: remote.unitCost,
     productionRatePerDay: remote.productionRatePerDay,
     laborHoursPerUnit: remote.laborHoursPerUnit,
+    ...(remote.imageUrl ? { imageUrl: remote.imageUrl } : {}),
   };
 }
 

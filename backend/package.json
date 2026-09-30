@@ -12,7 +12,13 @@
     "firestore:smoke": "tsx src/scripts/firestoreSmokeTest.ts",
     "api:cleanup": "tsx src/scripts/apiSmokeCleanup.ts",
     "auth:ensure-users": "tsx src/scripts/ensureAuthUsers.ts",
-    "auth:cleanup": "tsx src/scripts/authOwnershipCleanup.ts"
+    "auth:cleanup": "tsx src/scripts/authOwnershipCleanup.ts",
+    "test:profile-avatar": "tsx src/scripts/phaseProfileAvatarTest.ts",
+    "test:cors": "tsx src/scripts/phaseCorsWebOriginsTest.ts",
+    "test:member-presentation": "tsx src/scripts/phase2EEProjectMemberPresentationTest.ts",
+    "test:owner-reconcile": "tsx src/scripts/phase2FCOwnerReconcileTest.ts",
+    "test:fe3-recoverable-evidence": "tsx src/scripts/phase2FE3RecoverableEvidenceTest.ts",
+    "test:fe6-request-evidence": "tsx src/scripts/phase2FE6RequestEvidenceTest.ts"
   },
   "engines": {
     "node": ">=20"

@@ -27,8 +27,7 @@ import { formatProjectMemberRoleLabel } from "../utils/domain/memberRoleLabels";
 type Props = NativeStackScreenProps<RootStackParamList, "Invitations">;
 
 function invitationTitle(item: RemoteProjectInvitation): string {
-  // Backend invitation DTO has no project name — do not invent one.
-  return "Project invitation";
+  return item.projectName?.trim() || "Project invitation";
 }
 
 export default function InvitationsScreen({ navigation }: Props) {
@@ -194,12 +193,11 @@ export default function InvitationsScreen({ navigation }: Props) {
               const busy = actionId === item.id;
               return (
                 <View style={styles.card}>
-                  <Text style={styles.cardEyebrow}>INVITATION</Text>
                   <Text style={styles.cardTitle}>{invitationTitle(item)}</Text>
                   <Text style={styles.cardMeta}>
-                    Role · {formatProjectMemberRoleLabel(item.role)}
+                    {formatProjectMemberRoleLabel(item.role)}
                   </Text>
-                  <Text style={styles.cardMeta}>Status · Pending</Text>
+                  <Text style={styles.cardStatus}>Pending</Text>
                   <View style={styles.actions}>
                     <Pressable
                       style={[styles.declineButton, busy && styles.disabled]}
@@ -328,13 +326,8 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 12,
   },
-  cardEyebrow: {
-    ...typography.caption,
-    color: colors.text.muted,
-    marginBottom: 6,
-  },
   cardTitle: {
-    ...typography.bodyMedium,
+    ...typography.bodyLarge,
     color: colors.text.primary,
     flexShrink: 1,
   },
@@ -343,6 +336,11 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
     marginTop: 6,
     flexShrink: 1,
+  },
+  cardStatus: {
+    ...typography.caption,
+    color: colors.text.muted,
+    marginTop: 3,
   },
   actions: {
     flexDirection: "row",

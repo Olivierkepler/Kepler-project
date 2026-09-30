@@ -5,7 +5,10 @@ import {
   declineProjectInvitation,
   listPendingProjectInvitationsForEmail,
 } from "../repositories/projectInvitationsRepository.js";
-import { getProjectById } from "../repositories/projectsRepository.js";
+import {
+  getProjectById,
+  getProjectsByIds,
+} from "../repositories/projectsRepository.js";
 import { projectInvitationAcceptedActivity } from "../services/activity/projectActivityProjections.js";
 import {
   handleRouteError,
@@ -39,7 +42,29 @@ invitationsRouter.get("/me/invitations", async (req, res) => {
     const invitations = await listPendingProjectInvitationsForEmail(
       normalizeInvitationEmail(email),
     );
-    res.status(200).json(invitations);
+
+    let projectNameById = new Map<string, string>();
+    try {
+      const projects = await getProjectsByIds(
+        invitations.map((invitation) => invitation.projectId),
+      );
+      projectNameById = new Map(
+        projects
+          .map((project) => [project.id, project.name.trim()] as const)
+          .filter(([, name]) => name.length > 0),
+      );
+    } catch {
+      // Keep the invitation list available if project presentation lookup fails.
+    }
+
+    res.status(200).json(
+      invitations.map((invitation) => {
+        const projectName = projectNameById.get(invitation.projectId);
+        return projectName
+          ? { ...invitation, projectName }
+          : invitation;
+      }),
+    );
   } catch (error) {
     await handleRouteError(res, error);
   }

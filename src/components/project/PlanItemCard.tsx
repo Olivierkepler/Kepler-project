@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 
 import {
   Pressable,
+  Image,
   StyleSheet,
   Text,
   View,
@@ -28,6 +29,7 @@ import {
 import {
   formatPlanItemTypeLabel,
 } from "../../utils/domain/planItemFieldContext";
+import { getPlanItemImageDisplaySource } from "../../utils/domain/planItemImage";
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -37,6 +39,8 @@ export type PlanItemAssignmentDisplay = {
   displayLabel: string;
   hasActiveAssignment: boolean;
 };
+
+const KEPLER_NAVY = "#012169";
 
 type PlanItemCardProps = {
   item: PlanItem;
@@ -54,6 +58,12 @@ type PlanItemCardProps = {
   showAssignmentMeta?: boolean;
 
   onPress?: () => void;
+
+  onView?: () => void;
+
+  onEdit?: () => void;
+
+  onShare?: () => void;
 
   readOnly?: boolean;
 
@@ -127,11 +137,22 @@ export default function PlanItemCard({
   assignment = null,
   showAssignmentMeta = true,
   onPress,
+  onView,
+  onEdit,
+  onShare,
   readOnly = false,
   showDivider = true,
 }: PlanItemCardProps) {
-  // Read-only is presentation only — authorized shared items remain tappable.
-  const interactive = !!onPress;
+  const [failedImageUris, setFailedImageUris] = useState<string[]>([]);
+  const imageSource = getPlanItemImageDisplaySource(item, failedImageUris);
+
+  useEffect(() => {
+    setFailedImageUris([]);
+  }, [item.imageUri, item.imageUrl]);
+
+  const hasActionIcons = Boolean(onView || onEdit || onShare);
+  const interactive = !!onPress && !hasActionIcons;
+  const showActions = hasActionIcons;
 
   const initials =
     getInitials(item.label);
@@ -155,6 +176,23 @@ export default function PlanItemCard({
         )
       : null;
 
+  const fieldStatusLabel = latestMeasurement
+    ? "Measured"
+    : "Awaiting field";
+
+  const assignmentDisplayLabel = assignment?.displayLabel ?? "";
+  const opaqueMemberSuffix = /(?:^|\s·\s*)[A-Za-z0-9_-]{4,12}…[A-Za-z0-9_-]{4,10}$/.exec(
+    assignmentDisplayLabel,
+  );
+  const assignmentPrefix = opaqueMemberSuffix
+    ? assignmentDisplayLabel.slice(0, opaqueMemberSuffix.index).trim()
+    : "";
+  const safeAssignmentDisplayLabel = opaqueMemberSuffix
+    ? assignmentPrefix
+      ? `${assignmentPrefix} · Assigned member`
+      : "Assigned member"
+    : assignmentDisplayLabel;
+
   const deltaValue =
     latestDelta
       ? formatSignedQuantity(
@@ -163,48 +201,92 @@ export default function PlanItemCard({
         )
       : null;
 
-  return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.row,
+  const actionButtons = showActions ? (
+    <View style={styles.itemActions}>
+      {onView ? (
+        <Pressable
+          style={({ pressed }) => [
+            styles.actionButton,
+            pressed && styles.actionButtonPressed,
+          ]}
+          onPress={onView}
+          accessibilityRole="button"
+          accessibilityLabel={`View ${item.label}`}
+          hitSlop={4}
+        >
+          <Ionicons
+            name="eye-outline"
+            size={20}
+            color={KEPLER_NAVY}
+          />
+        </Pressable>
+      ) : null}
 
-        pressed &&
-          interactive &&
-          styles.rowPressed,
-      ]}
-      onPress={
-        interactive
-          ? onPress
-          : undefined
-      }
-      disabled={!interactive}
-      accessibilityRole={
-        interactive
-          ? "button"
-          : undefined
-      }
-      accessibilityLabel={
-        interactive
-          ? `Open plan item ${item.label}`
-          : item.label
-      }
-    >
-      {/* ------------------------------------------------------------------ */}
-      {/* Avatar                                                             */}
-      {/* ------------------------------------------------------------------ */}
+      {onEdit ? (
+        <Pressable
+          style={({ pressed }) => [
+            styles.actionButton,
+            pressed && styles.actionButtonPressed,
+          ]}
+          onPress={onEdit}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${item.label}`}
+          hitSlop={4}
+        >
+          <Ionicons
+            name="create-outline"
+            size={20}
+            color={KEPLER_NAVY}
+          />
+        </Pressable>
+      ) : null}
 
+      {onShare ? (
+        <Pressable
+          style={({ pressed }) => [
+            styles.actionButton,
+            pressed && styles.actionButtonPressed,
+          ]}
+          onPress={onShare}
+          accessibilityRole="button"
+          accessibilityLabel={`Share ${item.label}`}
+          hitSlop={4}
+        >
+          <Ionicons
+            name="share-outline"
+            size={20}
+            color={KEPLER_NAVY}
+          />
+        </Pressable>
+      ) : null}
+    </View>
+  ) : null;
+
+  const rowBody = (
+    <>
       <View
         style={
           styles.avatar
         }
       >
-        <Text
-          style={
-            styles.avatarText
-          }
-        >
-          {initials}
-        </Text>
+        {imageSource ? (
+          <Image
+            key={imageSource.uri}
+            source={{ uri: imageSource.uri }}
+            style={styles.avatarImage}
+            resizeMode="cover"
+            onError={() =>
+              setFailedImageUris((current) =>
+                current.includes(imageSource.uri)
+                  ? current
+                  : [...current, imageSource.uri],
+              )
+            }
+            accessible={false}
+          />
+        ) : (
+          <Text style={styles.avatarText}>{initials}</Text>
+        )}
       </View>
 
       {/* ------------------------------------------------------------------ */}
@@ -226,20 +308,35 @@ export default function PlanItemCard({
             style={
               styles.title
             }
-            numberOfLines={1}
+            numberOfLines={2}
             ellipsizeMode="tail"
           >
             {item.label}
           </Text>
 
-          <Text
-            style={
-              styles.plannedValue
-            }
-            numberOfLines={1}
+          <View
+            style={[
+              styles.statusBadge,
+              latestMeasurement
+                ? styles.measuredStatusBadge
+                : styles.awaitingStatusBadge,
+            ]}
+            accessible
+            accessibilityRole="text"
+            accessibilityLabel={`Field status, ${fieldStatusLabel}`}
           >
-            {plannedValue}
-          </Text>
+            <Text
+              style={[
+                styles.statusBadgeText,
+                latestMeasurement
+                  ? styles.measuredStatusText
+                  : styles.awaitingStatusText,
+              ]}
+              numberOfLines={1}
+            >
+              {fieldStatusLabel}
+            </Text>
+          </View>
         </View>
 
         {/* Middle row */}
@@ -279,22 +376,11 @@ export default function PlanItemCard({
               </>
             ) : null}
 
-            <View
-              style={
-                styles.metaDot
-              }
-            />
-
-            <Text
-              style={
-                styles.statusText
-              }
-            >
-              {latestMeasurement
-                ? "Measured"
-                : "Awaiting field"}
-            </Text>
           </View>
+
+          <Text style={styles.plannedValueSecondary} numberOfLines={1}>
+            {plannedValue}
+          </Text>
 
           {latestDelta ? (
             <View
@@ -337,51 +423,77 @@ export default function PlanItemCard({
               numberOfLines={1}
               ellipsizeMode="tail"
             >
-              {assignment.displayLabel}
+              {safeAssignmentDisplayLabel}
             </Text>
           </View>
         ) : null}
 
-        {/* Latest field */}
-        <View
-          style={
-            styles.previewRow
-          }
-        >
-          <Ionicons
-            name={
-              latestMeasurement
-                ? "checkmark-circle-outline"
-                : "time-outline"
-            }
-            size={14}
-            color={
-              latestMeasurement
-                ? "#667085"
-                : "#98A2B3"
-            }
-          />
+        {/* Latest field + actions */}
+        {showActions ? (
+          <View style={styles.itemFooterRow}>
+            <View style={styles.measurementStatus}>
+              <Ionicons
+                name={
+                  latestMeasurement
+                    ? "checkmark-circle-outline"
+                    : "time-outline"
+                }
+                size={14}
+                color={
+                  latestMeasurement
+                    ? "#667085"
+                    : "#98A2B3"
+                }
+              />
 
-          <Text
-            style={
-              styles.preview
-            }
-            numberOfLines={1}
-            ellipsizeMode="tail"
-          >
-            {fieldValue
-              ? `Latest field: ${fieldValue}`
-              : "No field measurement yet"}
-          </Text>
+              <Text
+                style={styles.preview}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {fieldValue
+                  ? `Latest field: ${fieldValue}`
+                  : "No field measurement yet"}
+              </Text>
+            </View>
 
-          {interactive ? (
+            {actionButtons}
+          </View>
+        ) : (
+          <View style={styles.previewRow}>
             <Ionicons
-              name="chevron-forward"
-              size={16}
-              color="#C5CBD3"
+              name={
+                latestMeasurement
+                  ? "checkmark-circle-outline"
+                  : "time-outline"
+              }
+              size={14}
+              color={
+                latestMeasurement
+                  ? "#667085"
+                  : "#98A2B3"
+              }
             />
-          ) : null}
-        </View>
+
+            <Text
+              style={styles.preview}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
+              {fieldValue
+                ? `Latest field: ${fieldValue}`
+                : "No field measurement yet"}
+            </Text>
+
+            {interactive ? (
+              <Ionicons
+                name="chevron-forward"
+                size={16}
+                color="#C5CBD3"
+              />
+            ) : null}
+          </View>
+        )}
 
         {/* Read-only state */}
         {readOnly ? (
@@ -406,19 +518,34 @@ export default function PlanItemCard({
           </View>
         ) : null}
       </View>
+    </>
+  );
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Divider                                                            */}
-      {/* ------------------------------------------------------------------ */}
+  return (
+    <View style={styles.rowContainer}>
+    {hasActionIcons ? (
+      <View style={styles.row}>{rowBody}</View>
+    ) : (
+      <Pressable
+        style={({ pressed }) => [
+          styles.row,
+          pressed && interactive && styles.rowPressed,
+        ]}
+        onPress={interactive ? onPress : undefined}
+        disabled={!interactive}
+        accessibilityRole={interactive ? "button" : undefined}
+        accessibilityLabel={
+          interactive ? `Open plan item ${item.label}` : item.label
+        }
+      >
+        {rowBody}
+      </Pressable>
+    )}
 
-      {showDivider ? (
-        <View
-          style={
-            styles.divider
-          }
-        />
-      ) : null}
-    </Pressable>
+    {showDivider ? (
+      <View style={styles.rowDivider} />
+    ) : null}
+    </View>
   );
 }
 
@@ -428,10 +555,13 @@ export default function PlanItemCard({
 
 const styles =
   StyleSheet.create({
+    rowContainer: {
+      position: "relative",
+      backgroundColor: "#FFFFFF",
+    },
+
     row: {
       position: "relative",
-
-      minHeight: 94,
 
       flexDirection: "row",
 
@@ -441,7 +571,7 @@ const styles =
 
       paddingRight: 14,
 
-      paddingVertical: 14,
+      paddingVertical: 12,
 
       backgroundColor:
         "#FFFFFF",
@@ -481,6 +611,12 @@ const styles =
       textAlign: "center",
     },
 
+    avatarImage: {
+      width: 50,
+      height: 50,
+      borderRadius: 25,
+    },
+
     /* ---------------------------------------------------------------------- */
     /* Content                                                                */
     /* ---------------------------------------------------------------------- */
@@ -494,10 +630,11 @@ const styles =
     topRow: {
       flexDirection: "row",
 
-      alignItems:
-        "center",
+      alignItems: "flex-start",
 
-      gap: 12,
+      justifyContent: "space-between",
+
+      gap: 8,
     },
 
     title: {
@@ -508,16 +645,49 @@ const styles =
       flex: 1,
 
       minWidth: 0,
+
+      fontWeight: "700",
     },
 
-    plannedValue: {
+    statusBadge: {
+      minHeight: 27,
+      paddingHorizontal: 9,
+      borderRadius: 9,
+      alignItems: "center",
+      justifyContent: "center",
+      flexShrink: 0,
+    },
+
+    measuredStatusBadge: {
+      backgroundColor: "#EEF4FF",
+    },
+
+    awaitingStatusBadge: {
+      backgroundColor: "#F2F4F7",
+    },
+
+    statusBadgeText: {
+      ...typography.metadata,
+      fontWeight: "600",
+    },
+
+    measuredStatusText: {
+      color: "#344E7A",
+    },
+
+    awaitingStatusText: {
+      color: "#667085",
+    },
+
+    plannedValueSecondary: {
       ...typography.bodyMedium,
 
-      color: "#101828",
+      color: "#475467",
 
       flexShrink: 0,
 
       textAlign: "right",
+      marginLeft: "auto",
     },
 
     /* ---------------------------------------------------------------------- */
@@ -571,14 +741,6 @@ const styles =
 
       backgroundColor:
         "#D0D5DD",
-    },
-
-    statusText: {
-      ...typography.caption,
-
-      color: "#98A2B3",
-
-      flexShrink: 1,
     },
 
     assignmentRow: {
@@ -637,6 +799,23 @@ const styles =
       marginTop: 6,
     },
 
+    itemFooterRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      width: "100%",
+      marginTop: 7,
+    },
+
+    measurementStatus: {
+      flexDirection: "row",
+      alignItems: "center",
+      flex: 1,
+      minWidth: 0,
+      gap: 5,
+      marginRight: 4,
+    },
+
     preview: {
       ...typography.caption,
 
@@ -668,21 +847,32 @@ const styles =
       color: "#98A2B3",
     },
 
+    itemActions: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginLeft: 8,
+      gap: 2,
+      flexShrink: 0,
+    },
+
+    actionButton: {
+      width: 40,
+      height: 40,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+
+    actionButtonPressed: {
+      opacity: 0.65,
+    },
+
     /* ---------------------------------------------------------------------- */
     /* Divider                                                                */
     /* ---------------------------------------------------------------------- */
 
-    divider: {
-      position: "absolute",
-
-      left: 77,
-      right: 0,
-      bottom: 0,
-
-      height:
-        StyleSheet.hairlineWidth,
-
-      backgroundColor:
-        "#E9EDF2",
+    rowDivider: {
+      marginLeft: 77,
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: "#E9EDF2",
     },
   });

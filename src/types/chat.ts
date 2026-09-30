@@ -10,6 +10,7 @@ export type Conversation = {
   id: string;
   projectId: string;
   type: ConversationType;
+  avatarUrl?: string;
   participantProjectMemberIds: string[];
   createdByProjectMemberId: string;
   createdAt: string;
@@ -35,6 +36,7 @@ export type ChatParticipantPresentation = {
   role: string;
   displayName: string | null;
   email: string | null;
+  avatarUrl: string | null;
 };
 
 /** Receiver-scoped Plan Item card payload (never leaks unauthorized fields). */

@@ -10,10 +10,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 
-import {
-  useOnboardingComplete,
-  type OnboardingStackParamList,
-} from "../../navigation/OnboardingNavigator";
+import { useOnboardingComplete } from "../../navigation/onboardingComplete";
+import type { OnboardingStackParamList } from "../../navigation/types";
 import { setHasCompletedOnboarding } from "../../utils/onboarding/onboardingPreference";
 import { typography } from "../../theme/colors";
 

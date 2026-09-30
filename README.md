@@ -299,10 +299,22 @@ agent/                   # buildsigma-agent — ADK + Gemini
 
 ### Mobile app
 
+Set `EXPO_PUBLIC_API_URL` in the root `.env` to the backend address reachable
+from the device running the app. Choose one value for your target:
+
+| Target | `EXPO_PUBLIC_API_URL` |
+| --- | --- |
+| iOS Simulator / Mac | `http://127.0.0.1:8080` |
+| Android emulator | `http://10.0.2.2:8080` |
+| Physical iPhone or Android device | `http://<MAC_LAN_IP>:8080` (use the Mac's LAN IP; both devices must be on the same network) |
+| Production | `https://<DEPLOYED_API_URL>` |
+
+After changing `.env`, stop and restart Expo so it reloads the public environment
+variable. The API uses port **8080**; Expo/Metro's port **8081** is separate.
+
 ```bash
-npm install
 cp .env.example .env
-# Set EXPO_PUBLIC_API_URL, EXPO_PUBLIC_FIREBASE_* (see .env.example — no secrets in repo)
+# Set EXPO_PUBLIC_API_URL for your target and fill in EXPO_PUBLIC_FIREBASE_*.
 npx expo start --dev-client --lan
 ```
 
@@ -312,9 +324,9 @@ Expo SDK: **54** (`expo ~54.0.36`). See [Expo v54 docs](https://docs.expo.dev/ve
 
 ```bash
 cd backend
-npm install
-cp .env.example .env
-# PORT, GOOGLE_CLOUD_PROJECT, EVIDENCE_STORAGE_BUCKET, Cloud Tasks / agent URLs as needed
+set -a
+source .env
+set +a
 npm run dev
 ```
 

@@ -15,6 +15,7 @@ export type MemberDisplayInput = {
 export type UserPresentationRecord = {
   displayName?: string | null;
   email?: string | null;
+  avatarUrl?: string | null;
 };
 
 export type MemberPresentationContext = {
@@ -156,6 +157,7 @@ export function buildProfileByUserIdMap(
     uid: string;
     displayName: string;
     email: string;
+    avatarUrl?: string | null;
   }[],
 ): Map<string, UserPresentationRecord> {
   const map = new Map<string, UserPresentationRecord>();
@@ -164,6 +166,7 @@ export function buildProfileByUserIdMap(
     map.set(profile.uid, {
       displayName: profile.displayName.trim() || null,
       email: profile.email.trim() || null,
+      avatarUrl: profile.avatarUrl?.trim() || null,
     });
   }
 

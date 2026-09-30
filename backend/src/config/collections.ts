@@ -18,6 +18,10 @@ export const COLLECTIONS = {
   workPackages: "workPackages",
   /** Flat WorkPackage ↔ ProjectMember assignments (Phase 2D). */
   workPackageAssignments: "workPackageAssignments",
+  /** Project planned progress baseline points (Phase 2A). */
+  projectProgressBaselines: "projectProgressBaselines",
+  /** Append-only project actual progress history (Phase 2A). */
+  projectProgressSnapshots: "projectProgressSnapshots",
   /** Append-only Measurement contribution review audit (Phase 2J.1). */
   contributionReviewEvents: "contributionReviewEvents",
   /** Append-only Assignment lifecycle progress audit (Phase 2K.1). */

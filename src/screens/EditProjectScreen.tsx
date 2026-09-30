@@ -59,6 +59,10 @@ import {
   syncProjectUpdateToCloud,
 } from "../services/sync/projectUpdate";
 
+import {
+  persistProjectImage,
+} from "../services/projects/projectImageLocal";
+
 import type {
   ProjectStatus,
 } from "../types/project";
@@ -226,6 +230,11 @@ export default function EditProjectScreen({
   >(null);
 
   const [
+    selectedAvatarSourceUri,
+    setSelectedAvatarSourceUri,
+  ] = useState<string | null>(null);
+
+  const [
     avatarLoading,
     setAvatarLoading,
   ] = useState(false);
@@ -299,6 +308,9 @@ export default function EditProjectScreen({
         setAvatarUri(
           selected.uri,
         );
+        setSelectedAvatarSourceUri(
+          selected.uri,
+        );
       } catch {
         Alert.alert(
           "Unable to load image",
@@ -366,6 +378,7 @@ export default function EditProjectScreen({
           project.avatarUri ??
             null,
         );
+        setSelectedAvatarSourceUri(null);
 
         setArchivedAt(
           typeof project.archivedAt ===
@@ -427,6 +440,15 @@ export default function EditProjectScreen({
         const ownerUid =
           user.uid;
 
+        const avatarUriToSave =
+          avatarUri && selectedAvatarSourceUri
+            ? await persistProjectImage(
+                ownerUid,
+                projectId,
+                selectedAvatarSourceUri,
+              )
+            : avatarUri;
+
         const updated =
           await updateProject(
             ownerUid,
@@ -440,7 +462,7 @@ export default function EditProjectScreen({
 
               status,
 
-              avatarUri,
+              avatarUri: avatarUriToSave,
             },
           );
 
@@ -1064,9 +1086,10 @@ export default function EditProjectScreen({
                   !avatarLoading ? (
                     <Pressable
                       onPress={() =>
-                        setAvatarUri(
-                          null,
-                        )
+                        {
+                          setAvatarUri(null);
+                          setSelectedAvatarSourceUri(null);
+                        }
                       }
                       disabled={
                         saving ||

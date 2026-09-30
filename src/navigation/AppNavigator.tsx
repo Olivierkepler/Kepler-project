@@ -32,6 +32,7 @@ import ProjectScreen from "../screens/ProjectScreen";
 import ProjectTeamScreen from "../screens/ProjectTeamScreen";
 import ProjectTeamMemberScreen from "../screens/ProjectTeamMemberScreen";
 import ProjectChatScreen from "../screens/ProjectChatScreen";
+import ChatInfoScreen from "../screens/ChatInfoScreen";
 import InviteProjectMemberScreen from "../screens/InviteProjectMemberScreen";
 import SharedCaptureScreen from "../screens/SharedCaptureScreen";
 import ContributionReviewScreen from "../screens/ContributionReviewScreen";
@@ -180,6 +181,11 @@ export default function AppNavigator() {
       <Stack.Screen
         name="ProjectChat"
         component={ProjectChatScreen}
+      />
+
+      <Stack.Screen
+        name="ChatInfo"
+        component={ChatInfoScreen}
       />
 
       <Stack.Screen

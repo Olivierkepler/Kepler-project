@@ -18,6 +18,15 @@ export type BootstrapPlanItemRequest = {
 export type RemotePlanItem = BootstrapPlanItemRequest & {
   id: string;
   projectId: string;
+  /** Short-lived signed presentation URL; never use as durable local storage. */
+  imageUrl?: string;
+};
+
+export type PlanItemImageUploadUrl = {
+  uploadUrl: string;
+  objectId: string;
+  contentType: string;
+  expiresAt: string;
 };
 
 export type BootstrapRemotePlanItemsResult = {
@@ -47,6 +56,18 @@ function isRemotePlanItem(value: unknown): value is RemotePlanItem {
     typeof record.productionRatePerDay === "number" &&
     typeof record.laborHoursPerUnit === "number"
   );
+}
+
+function normalizeRemotePlanItem(value: RemotePlanItem): RemotePlanItem {
+  const imageUrl =
+    typeof value.imageUrl === "string" ? value.imageUrl.trim() : "";
+  const normalized = { ...value };
+  if (imageUrl) {
+    normalized.imageUrl = imageUrl;
+  } else {
+    delete normalized.imageUrl;
+  }
+  return normalized;
 }
 
 function isBootstrapResult(
@@ -125,7 +146,10 @@ export async function bootstrapRemotePlanItems(
     throw new Error("Unable to reach the authenticated API.");
   }
 
-  return payload;
+  return {
+    ...payload,
+    items: payload.items.map(normalizeRemotePlanItem),
+  };
 }
 
 export type UpdateRemotePlanItemRequest = {
@@ -180,7 +204,7 @@ export async function updateRemotePlanItem(
     throw new Error("Unable to reach the authenticated API.");
   }
 
-  return payload;
+  return normalizeRemotePlanItem(payload);
 }
 
 /**
@@ -218,7 +242,7 @@ export async function getRemotePlanItems(
     throw new Error("Unable to reach the authenticated API.");
   }
 
-  return payload;
+  return payload.map((item) => normalizeRemotePlanItem(item));
 }
 
 /** Alias for read-only cloud PlanItem discovery by remote project id. */
@@ -439,4 +463,106 @@ export async function getRemotePlanItemProvenance(
   }
 
   return payload;
+}
+
+function planItemImagePath(
+  remoteProjectId: string,
+  remotePlanItemId: string,
+): string {
+  return `/api/projects/${encodeURIComponent(remoteProjectId)}/plan-items/${encodeURIComponent(remotePlanItemId)}/image`;
+}
+
+/** POST /api/projects/:projectId/plan-items/:planItemId/image/upload-url */
+export async function requestRemotePlanItemImageUploadUrl(
+  remoteProjectId: string,
+  remotePlanItemId: string,
+  contentType: string,
+): Promise<PlanItemImageUploadUrl> {
+  let response: Response;
+  try {
+    response = await authenticatedFetch(
+      `${planItemImagePath(remoteProjectId, remotePlanItemId)}/upload-url`,
+      { method: "POST", body: JSON.stringify({ contentType }) },
+    );
+  } catch (error) {
+    mapAuthFetchError(error);
+  }
+  if (!response.ok) {
+    throw new Error("Unable to request a Plan Item image upload URL.");
+  }
+  const payload = await parseJson(response);
+  if (typeof payload !== "object" || payload === null) {
+    throw new Error("Invalid Plan Item image upload response.");
+  }
+  const record = payload as Record<string, unknown>;
+  if (
+    typeof record.uploadUrl !== "string" ||
+    typeof record.objectId !== "string" ||
+    typeof record.contentType !== "string" ||
+    typeof record.expiresAt !== "string"
+  ) {
+    throw new Error("Invalid Plan Item image upload response.");
+  }
+  return {
+    uploadUrl: record.uploadUrl,
+    objectId: record.objectId,
+    contentType: record.contentType,
+    expiresAt: record.expiresAt,
+  };
+}
+
+/** POST /api/projects/:projectId/plan-items/:planItemId/image/commit */
+export async function commitRemotePlanItemImage(input: {
+  remoteProjectId: string;
+  remotePlanItemId: string;
+  objectId: string;
+  contentType: string;
+}): Promise<RemotePlanItem> {
+  let response: Response;
+  try {
+    response = await authenticatedFetch(
+      `${planItemImagePath(input.remoteProjectId, input.remotePlanItemId)}/commit`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          objectId: input.objectId,
+          contentType: input.contentType,
+        }),
+      },
+    );
+  } catch (error) {
+    mapAuthFetchError(error);
+  }
+  if (!response.ok) {
+    throw new Error("Unable to save the Plan Item image.");
+  }
+  const payload = await parseJson(response);
+  if (!isRemotePlanItem(payload)) {
+    throw new Error("Invalid Plan Item image commit response.");
+  }
+  return normalizeRemotePlanItem(payload);
+}
+
+/** DELETE /api/projects/:projectId/plan-items/:planItemId/image */
+export async function deleteRemotePlanItemImage(
+  remoteProjectId: string,
+  remotePlanItemId: string,
+): Promise<RemotePlanItem> {
+  let response: Response;
+  try {
+    response = await authenticatedFetch(
+      planItemImagePath(remoteProjectId, remotePlanItemId),
+      { method: "DELETE" },
+    );
+  } catch (error) {
+    mapAuthFetchError(error);
+  }
+  if (!response.ok) {
+    throw new Error("Unable to remove the Plan Item image.");
+  }
+  const payload = await parseJson(response);
+  if (!isRemotePlanItem(payload)) {
+    throw new Error("Invalid Plan Item image delete response.");
+  }
+  return normalizeRemotePlanItem(payload);
 }

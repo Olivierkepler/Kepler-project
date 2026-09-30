@@ -108,6 +108,36 @@ assert(
 assert(
   buildAgentRunPresentation(
     baseRun({
+      status: "failed",
+      currentStep: "failed",
+      canRecoverEvidence: true,
+    }),
+  ).ctaType === "recover_evidence",
+  "recoverable failed → recover_evidence CTA",
+);
+
+assert(
+  buildAgentRunPresentation(
+    baseRun({
+      status: "running",
+      currentStep: "assess_variance",
+      lastEvidenceId: "ev-1",
+      canRecoverStickyRequestEvidence: true,
+    }),
+  ).ctaType === "recover_sticky_request_evidence",
+  "sticky request_evidence → recover_sticky_request_evidence CTA",
+);
+
+assert(
+  buildAgentRunPresentation(
+    baseRun({ status: "failed", currentStep: "failed" }),
+  ).ctaType === "view_run",
+  "non-recoverable failed → view_run CTA",
+);
+
+assert(
+  buildAgentRunPresentation(
+    baseRun({
       status: "escalated",
       currentStep: "escalated",
       outcome: {

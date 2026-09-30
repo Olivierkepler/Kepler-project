@@ -12,6 +12,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAuth } from "../../auth/AuthProvider";
 import {
   ensureProjectConversation,
+  listMessageableMembers,
   listProjectConversations,
 } from "../../services/api/conversations";
 import {
@@ -20,7 +21,10 @@ import {
 } from "../../services/api/invitations";
 import { resolveProjectCollaborationContext } from "../../services/collaboration/projectCollaborationContext";
 import { getRemoteProjectId } from "../../store/projectCloudMappings";
-import type { Conversation } from "../../types/chat";
+import type {
+  ChatParticipantPresentation,
+  Conversation,
+} from "../../types/chat";
 import { getMeasurementsForProject } from "../../store/measurements";
 import {
   findProjectMemberByUserId,
@@ -33,6 +37,8 @@ import {
 import { getWorkPackagesForProject } from "../../store/workPackages";
 import { getPlanItemsForProject } from "../../store/planItems";
 import { colors, typography } from "../../theme/colors";
+import GroupAvatar from "../user/GroupAvatar";
+import UserAvatar from "../user/UserAvatar";
 import type {
   ProjectMember,
   ProjectMemberStatus,
@@ -44,7 +50,6 @@ import type { WorkPackage } from "../../types/workPackage";
 import type { WorkPackageAssignment } from "../../types/workPackageAssignment";
 import {
   formatMemberDisplayLabel,
-  memberDisplayInitial,
   type UserPresentationRecord,
 } from "../../utils/domain/memberDisplay";
 import { fetchMemberPresentationContext } from "../../utils/domain/memberPresentationContext";
@@ -54,6 +59,9 @@ import {
   buildTeamProjectWorkMaps,
   formatTeamMemberWorkLine,
 } from "../../utils/domain/teamMemberWork";
+
+const KEPLER_NAVY = colors.brand.navy;
+const CHEVRON_COLOR = colors.text.muted;
 
 export type OpenChatConversationParams = {
   remoteProjectId: string;
@@ -103,6 +111,48 @@ function canInviteMembers(
   );
 }
 
+function resolveDirectConversationPresentation(input: {
+  conversation: Conversation;
+  currentProjectMemberId?: string;
+  members: ProjectMember[];
+  messageableMembers: ChatParticipantPresentation[];
+  profileByUserId: Map<string, UserPresentationRecord>;
+}): {
+  titleHint: string;
+  subtitleHint: string;
+  avatarUrl: string | null;
+  rowPrimary: string;
+  rowSecondary: string;
+} {
+  const otherMemberId =
+    input.conversation.participantProjectMemberIds.find(
+      (memberId) => memberId !== input.currentProjectMemberId,
+    ) ?? input.conversation.participantProjectMemberIds[0];
+  const member = input.members.find((item) => item.id === otherMemberId);
+  const messageableMember = input.messageableMembers.find(
+    (item) => item.projectMemberId === otherMemberId,
+  );
+  const profile = member
+    ? input.profileByUserId.get(member.userId)
+    : undefined;
+  const label = formatMemberDisplayLabel({
+    displayName: profile?.displayName ?? messageableMember?.displayName,
+    email: profile?.email ?? messageableMember?.email,
+    role: member?.role ?? messageableMember?.role,
+    userId: member?.userId ?? messageableMember?.userId,
+  });
+  const subtitle = "Private conversation";
+
+  return {
+    titleHint: label,
+    subtitleHint: subtitle,
+    avatarUrl: profile?.avatarUrl ?? messageableMember?.avatarUrl ?? null,
+    rowPrimary: label,
+    rowSecondary:
+      input.conversation.lastMessagePreview?.trim() || subtitle,
+  };
+}
+
 export default function ProjectTeamContent({
   projectId,
   isShared = false,
@@ -131,6 +181,11 @@ export default function ProjectTeamContent({
   const [directConversations, setDirectConversations] = useState<Conversation[]>(
     [],
   );
+  const [projectConversation, setProjectConversation] =
+    useState<Conversation | null>(null);
+  const [messageableMembers, setMessageableMembers] = useState<
+    ChatParticipantPresentation[]
+  >([]);
   const [openingProjectChat, setOpeningProjectChat] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [profileByUserId, setProfileByUserId] = useState<
@@ -151,6 +206,8 @@ export default function ProjectTeamContent({
         setInviteCloudReady(false);
         setRemoteProjectId(null);
         setDirectConversations([]);
+        setProjectConversation(null);
+        setMessageableMembers([]);
         setInvitationsError(null);
         setChatError(null);
         return;
@@ -160,6 +217,7 @@ export default function ProjectTeamContent({
       let active = true;
 
       async function loadChatExtras(mappedRemoteId: string) {
+        setMessageableMembers([]);
         try {
           const conversations = await listProjectConversations(mappedRemoteId);
           if (!active) {
@@ -168,12 +226,28 @@ export default function ProjectTeamContent({
           setDirectConversations(
             conversations.filter((item) => item.type === "direct"),
           );
+          setProjectConversation(
+            conversations.find((item) => item.type === "project") ?? null,
+          );
           setChatError(null);
+
+          try {
+            const presentations = await listMessageableMembers(mappedRemoteId);
+            if (active) {
+              setMessageableMembers(presentations);
+            }
+          } catch {
+            if (active) {
+              setMessageableMembers([]);
+            }
+          }
         } catch (err) {
           if (!active) {
             return;
           }
           setDirectConversations([]);
+          setProjectConversation(null);
+          setMessageableMembers([]);
           setChatError(
             err instanceof Error
               ? err.message
@@ -220,6 +294,8 @@ export default function ProjectTeamContent({
           setInviteCloudReady(false);
           setRemoteProjectId(null);
           setDirectConversations([]);
+          setProjectConversation(null);
+          setMessageableMembers([]);
           setInvitationsError(null);
           return;
         }
@@ -266,6 +342,8 @@ export default function ProjectTeamContent({
           setInviteCloudReady(false);
           setRemoteProjectId(null);
           setDirectConversations([]);
+          setProjectConversation(null);
+          setMessageableMembers([]);
           setInvitationsError(null);
           return;
         }
@@ -335,6 +413,8 @@ export default function ProjectTeamContent({
           setPendingInvitations([]);
           setInvitationsError(null);
           setDirectConversations([]);
+          setProjectConversation(null);
+          setMessageableMembers([]);
         }
       }
 
@@ -379,6 +459,14 @@ export default function ProjectTeamContent({
   const displayProjectName =
     project?.name?.trim() || projectNameHint?.trim() || "Project";
 
+  const currentProjectMember = useMemo(() => {
+    if (!user?.uid) {
+      return undefined;
+    }
+
+    return members.find((member) => member.userId === user.uid);
+  }, [members, user?.uid]);
+
   const handleOpenProjectChat = async () => {
     if (!remoteProjectId || openingProjectChat) {
       return;
@@ -410,73 +498,197 @@ export default function ProjectTeamContent({
   if (!project && !isShared) {
     return (
       <View style={styles.container}>
-        <Text style={styles.title}>Project not found.</Text>
+        <Text style={styles.emptyText}>Project not found.</Text>
       </View>
     );
   }
 
   return (
+    <View style={styles.container}>
     <ScrollView
-      style={styles.container}
+      style={styles.scroll}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
     >
-      <Text style={styles.eyebrow}>PROJECT COLLABORATION</Text>
-      <Text style={styles.title}>Project Team</Text>
-      <Text style={styles.subtitle}>
-        {isShared
-          ? "Collaborate with the people on this project."
-          : "Manage the people working on this project."}
-      </Text>
-      <Text style={styles.projectName}>{displayProjectName}</Text>
-
-      {canInvite ? (
-        <Pressable
-          style={styles.inviteButton}
-          onPress={() => onInviteMember?.()}
-          accessibilityRole="button"
-          accessibilityLabel="Invite member"
-        >
-          <Text style={styles.inviteButtonText}>+ Invite member</Text>
-        </Pressable>
-      ) : null}
 
       {canInvite && !inviteCloudReady ? (
-        <Text style={styles.cloudHint}>
-          Cloud sync is required before invitations can be sent.
-        </Text>
+        <View style={styles.syncNotice}>
+          <Ionicons
+            name="cloud-offline-outline"
+            size={16}
+            color={colors.delta}
+          />
+          <Text style={styles.syncNoticeText}>
+            Cloud sync is required before invitations can be sent.
+          </Text>
+        </View>
       ) : null}
 
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Project Chat</Text>
-      </View>
+      {invitationsError ? (
+        <Text style={styles.errorText}>{invitationsError}</Text>
+      ) : null}
+
+      {members.length > 0 ? (
+        <>
+          <View style={styles.memberSectionHeader}>
+            <Text style={styles.memberSectionTitle}>Team members..</Text>
+            <Text style={styles.memberSectionCount}>{memberCountLabel}</Text>
+          </View>
+
+          {members.map((member) => {
+            const isOwner = member.role === "owner";
+            const profile = profileByUserId.get(member.userId);
+            const displayLabel = formatMemberDisplayLabel({
+              displayName: profile?.displayName,
+              email: profile?.email,
+              role: member.role,
+              userId: member.userId,
+            });
+            const summary = memberSummaries.get(member.id);
+            const workLine = summary
+              ? formatTeamMemberWorkLine(summary)
+              : "No work assigned yet";
+            const packageLine = summary?.workPackageLabel ?? "";
+
+            return (
+              <View key={member.id}>
+                <Pressable
+                  onPress={() => onOpenMember?.(member.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${displayLabel}, ${formatProjectMemberRoleLabel(member.role)}, ${workLine}`}
+                  style={({ pressed }) => [
+                    styles.memberRow,
+                    pressed && styles.memberRowPressed,
+                  ]}
+                >
+                  <UserAvatar
+                    imageUrl={
+                      profile?.avatarUrl ??
+                      messageableMembers.find(
+                        (item) => item.projectMemberId === member.id,
+                      )?.avatarUrl
+                    }
+                    size={44}
+                    isOwner={isOwner}
+                    style={styles.memberRowAvatar}
+                  />
+
+                  <View style={styles.memberRowContent}>
+                    <Text
+                      style={[
+                        styles.memberRowPrimary,
+                        isOwner && styles.ownerMemberRowPrimary,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {displayLabel}
+                    </Text>
+                    <Text style={styles.memberRowSecondary} numberOfLines={1}>
+                      {formatProjectMemberRoleLabel(member.role)}
+                      {member.status !== "active"
+                        ? ` · ${formatStatusLabel(member.status)}`
+                        : ""}
+                    </Text>
+                    {packageLine ? (
+                      <Text style={styles.memberRowWorkPackage} numberOfLines={1}>
+                        {packageLine}
+                      </Text>
+                    ) : null}
+                    <Text style={styles.memberRowWorkSummary} numberOfLines={1}>
+                      {workLine}
+                    </Text>
+                  </View>
+
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color={CHEVRON_COLOR}
+                  />
+                </Pressable>
+                <View style={styles.memberRowSeparator} />
+              </View>
+            );
+          })}
+        </>
+      ) : null}
+
+      {pendingInvitations.length > 0 ? (
+        <>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Pending invitations</Text>
+            <Text style={styles.sectionCount}>{pendingCountLabel}</Text>
+          </View>
+
+          {pendingInvitations.map((invitation) => (
+            <View key={invitation.id}>
+              <View style={styles.row}>
+                <UserAvatar pending size={44} style={styles.rowAvatar} />
+                <View style={styles.rowContent}>
+                  <Text style={styles.rowPrimary} numberOfLines={1}>
+                    {invitation.email}
+                  </Text>
+                  <Text style={styles.rowSecondary} numberOfLines={1}>
+                    {formatProjectMemberRoleLabel(invitation.role)}
+                  </Text>
+                </View>
+                <View style={styles.pendingBadge}>
+                  <Text style={styles.pendingBadgeText}>PENDING</Text>
+                </View>
+              </View>
+              <View style={styles.rowSeparator} />
+            </View>
+          ))}
+        </>
+      ) : null}
 
       {remoteProjectId ? (
-        <Pressable
-          onPress={() => {
-            void handleOpenProjectChat();
-          }}
-          disabled={openingProjectChat}
-          accessibilityRole="button"
-          accessibilityLabel="Open Project Chat"
-          accessibilityState={{ disabled: openingProjectChat, busy: openingProjectChat }}
-          style={({ pressed }) => [
-            styles.rowCard,
-            styles.chatRowCard,
-            pressed && styles.rowCardPressed,
-            openingProjectChat && styles.chatRowDisabled,
-          ]}
-        >
-          <View style={styles.rowContent}>
-            <Text style={styles.rowPrimary}>Project Chat</Text>
-            <Text style={styles.rowSecondary}>Team conversation</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="#98A2B3" />
-        </Pressable>
+        <>
+          <Pressable
+            onPress={() => {
+              void handleOpenProjectChat();
+            }}
+            disabled={openingProjectChat}
+            accessibilityRole="button"
+            accessibilityLabel="Open Project Chat"
+            accessibilityState={{
+              disabled: openingProjectChat,
+              busy: openingProjectChat,
+            }}
+            style={({ pressed }) => [
+              styles.row,
+              styles.projectChatRow,
+              pressed && styles.rowPressed,
+              openingProjectChat && styles.chatRowDisabled,
+            ]}
+          >
+            <GroupAvatar
+              size={46}
+              imageUrl={projectConversation?.avatarUrl}
+              style={styles.rowAvatar}
+            />
+            <View style={styles.rowContent}>
+              <Text style={styles.rowPrimary}>Project Chat</Text>
+              <Text style={styles.rowSecondary}>Team conversation</Text>
+            </View>
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color={CHEVRON_COLOR}
+            />
+          </Pressable>
+          <View style={styles.rowSeparator} />
+        </>
       ) : (
-        <Text style={styles.emptyText}>
-          Cloud sync is required before Project Chat is available.
-        </Text>
+        <View style={[styles.syncNotice, styles.projectChatSyncNotice]}>
+          <Ionicons
+            name="cloud-offline-outline"
+            size={16}
+            color={colors.delta}
+          />
+          <Text style={styles.syncNoticeText}>
+            Cloud sync is required before Project Chat is available.
+          </Text>
+        </View>
       )}
 
       {chatError ? <Text style={styles.errorText}>{chatError}</Text> : null}
@@ -489,153 +701,78 @@ export default function ProjectTeamContent({
               {String(directConversations.length)}
             </Text>
           </View>
-          {directConversations.map((conversation) => (
-            <Pressable
-              key={conversation.id}
-              onPress={() => {
-                if (!remoteProjectId) {
-                  return;
-                }
-                onOpenConversation?.({
-                  remoteProjectId,
-                  conversationId: conversation.id,
-                  titleHint: "Direct Chat",
-                  subtitleHint: "Private conversation",
-                });
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Open direct conversation"
-              style={({ pressed }) => [
-                styles.rowCard,
-                pressed && styles.rowCardPressed,
-              ]}
-            >
-              <View style={styles.rowContent}>
-                <Text style={styles.rowPrimary}>Direct Chat</Text>
-                <Text style={styles.rowSecondary} numberOfLines={1}>
-                  {conversation.lastMessagePreview?.trim() ||
-                    "Private conversation"}
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color="#98A2B3" />
-            </Pressable>
-          ))}
-        </>
-      ) : null}
+          {directConversations.map((conversation) => {
+            const presentation = resolveDirectConversationPresentation({
+              conversation,
+              currentProjectMemberId: currentProjectMember?.id,
+              members,
+              messageableMembers,
+              profileByUserId,
+            });
 
-      {!isShared ? (
-        <>
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Members</Text>
-        <Text style={styles.sectionCount}>{memberCountLabel}</Text>
-      </View>
-
-      {members.length === 0 ? (
-        <Text style={styles.emptyText}>No project members yet.</Text>
-      ) : (
-        members.map((member) => {
-          const isOwner = member.role === "owner";
-          const profile = profileByUserId.get(member.userId);
-          const displayLabel = formatMemberDisplayLabel({
-            displayName: profile?.displayName,
-            email: profile?.email,
-            role: member.role,
-            userId: member.userId,
-          });
-          const summary = memberSummaries.get(member.id);
-          const workLine = summary
-            ? formatTeamMemberWorkLine(summary)
-            : "No work assigned yet";
-          const packageLine = summary?.workPackageLabel ?? "";
-
-          return (
-            <Pressable
-              key={member.id}
-              onPress={() => onOpenMember?.(member.id)}
-              accessibilityRole="button"
-              accessibilityLabel={`${displayLabel}, ${formatProjectMemberRoleLabel(member.role)}, ${workLine}`}
-              style={({ pressed }) => [
-                styles.rowCard,
-                isOwner && styles.ownerRowCard,
-                pressed && styles.rowCardPressed,
-              ]}
-            >
-              <View style={[styles.avatar, isOwner && styles.ownerAvatar]}>
-                <Text
-                  style={[
-                    styles.avatarText,
-                    isOwner && styles.ownerAvatarText,
+            return (
+              <View key={conversation.id}>
+                <Pressable
+                  onPress={() => {
+                    if (!remoteProjectId) {
+                      return;
+                    }
+                    onOpenConversation?.({
+                      remoteProjectId,
+                      conversationId: conversation.id,
+                      titleHint: presentation.titleHint,
+                      subtitleHint: presentation.subtitleHint,
+                    });
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open direct conversation"
+                  style={({ pressed }) => [
+                    styles.row,
+                    pressed && styles.rowPressed,
                   ]}
                 >
-                  {memberDisplayInitial(displayLabel)}
-                </Text>
+                  <UserAvatar
+                    imageUrl={presentation.avatarUrl}
+                    size={44}
+                    style={styles.rowAvatar}
+                  />
+                  <View style={styles.rowContent}>
+                    <Text style={styles.rowPrimary} numberOfLines={1}>
+                      {presentation.rowPrimary}
+                    </Text>
+                    <Text style={styles.rowSecondary} numberOfLines={1}>
+                      {presentation.rowSecondary}
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color={CHEVRON_COLOR}
+                  />
+                </Pressable>
+                <View style={styles.rowSeparator} />
               </View>
-
-              <View style={styles.rowContent}>
-                <Text style={styles.rowPrimary} numberOfLines={1}>
-                  {displayLabel}
-                </Text>
-                <Text style={styles.rowSecondary}>
-                  {formatProjectMemberRoleLabel(member.role)}
-                  {member.status !== "active"
-                    ? ` · ${formatStatusLabel(member.status)}`
-                    : ""}
-                </Text>
-                {packageLine ? (
-                  <Text style={styles.rowWorkPackage} numberOfLines={1}>
-                    {packageLine}
-                  </Text>
-                ) : null}
-                <Text style={styles.rowWorkSummary} numberOfLines={1}>
-                  {workLine}
-                </Text>
-              </View>
-
-              <Ionicons name="chevron-forward" size={18} color="#98A2B3" />
-            </Pressable>
-          );
-        })
-      )}
-
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Pending invitations</Text>
-        <Text style={styles.sectionCount}>{pendingCountLabel}</Text>
-      </View>
-
-      {invitationsError ? (
-        <Text style={styles.errorText}>{invitationsError}</Text>
-      ) : null}
-
-      {!inviteCloudReady ? (
-        <Text style={styles.emptyText}>
-          Pending cloud invitations appear after this project is connected.
-        </Text>
-      ) : pendingInvitations.length === 0 ? (
-        <Text style={styles.emptyText}>No pending invitations.</Text>
-      ) : (
-        pendingInvitations.map((invitation) => (
-          <View key={invitation.id} style={styles.rowCard}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {memberDisplayInitial(
-                  formatMemberDisplayLabel({ email: invitation.email }),
-                )}
-              </Text>
-            </View>
-            <View style={styles.rowContent}>
-              <Text style={styles.rowPrimary} numberOfLines={1}>
-                {invitation.email}
-              </Text>
-              <Text style={styles.rowSecondary}>
-                {formatProjectMemberRoleLabel(invitation.role)} · Pending
-              </Text>
-            </View>
-          </View>
-        ))
-      )}
+            );
+          })}
         </>
       ) : null}
     </ScrollView>
+
+    {canInvite ? (
+      <Pressable
+        style={({ pressed }) => [
+          styles.floatingAddButton,
+          pressed && styles.floatingAddButtonPressed,
+        ]}
+        onPress={() => onInviteMember?.()}
+        accessibilityRole="button"
+        accessibilityLabel="Invite a team member"
+        hitSlop={8}
+      >
+        <Ionicons name="add" size={28} color="#FFFFFF" />
+      </Pressable>
+    ) : null}
+    </View>
   );
 }
 
@@ -643,138 +780,215 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-    paddingTop: 20,
+  },
+  scroll: {
+    flex: 1,
   },
   content: {
     paddingHorizontal: 20,
-    paddingBottom: 50,
+    paddingTop: 12,
+    paddingBottom: 100,
   },
-  eyebrow: {
+  memberSectionHeader: {
+    marginTop: 22,
+    marginBottom: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  memberSectionTitle: {
+    ...typography.sectionTitle,
+    color: colors.text.primary,
+    fontSize: 16,
+  },
+  memberSectionCount: {
     ...typography.caption,
     color: colors.text.muted,
+    fontSize: 12,
   },
-  title: {
-    ...typography.display,
-    color: colors.text.primary,
-    marginTop: 8,
-  },
-  subtitle: {
+  memberEmptyText: {
     ...typography.body,
-    color: colors.text.secondary,
-    marginTop: 8,
+    color: colors.text.muted,
+    marginVertical: 4,
   },
-  projectName: {
+  memberRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 68,
+    paddingVertical: 10,
+    paddingRight: 3,
+  },
+  memberRowPressed: {
+    backgroundColor: colors.shadow.soft,
+  },
+  memberRowAvatar: {
+    marginRight: 12,
+    flexShrink: 0,
+  },
+  memberRowContent: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 10,
+  },
+  memberRowPrimary: {
     ...typography.bodyMedium,
     color: colors.text.primary,
-    marginTop: 10,
   },
-  inviteButton: {
-    marginTop: 20,
-    minHeight: 48,
-    borderRadius: 12,
-    backgroundColor: colors.brand.blue,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 16,
+  ownerMemberRowPrimary: {
+    color: KEPLER_NAVY,
   },
-  inviteButtonText: {
-    ...typography.button,
-    color: "#FFFFFF",
+  memberRowSecondary: {
+    ...typography.caption,
+    color: colors.text.muted,
+    marginTop: 2,
+  },
+  memberRowWorkPackage: {
+    ...typography.caption,
+    color: colors.text.muted,
+    marginTop: 3,
+  },
+  memberRowWorkSummary: {
+    ...typography.caption,
+    color: colors.text.muted,
+    marginTop: 2,
+  },
+  memberRowSeparator: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginLeft: 58,
   },
   sectionHeader: {
-    marginTop: 30,
-    marginBottom: 12,
+    marginTop: 24,
+    marginBottom: 8,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
   sectionTitle: {
-    ...typography.caption,
-    color: colors.brand.navy,
-    textTransform: "uppercase",
+    ...typography.sectionTitle,
+    color: colors.text.primary,
+    fontSize: 16,
   },
   sectionCount: {
     ...typography.caption,
     color: colors.text.muted,
+    fontSize: 12,
   },
   emptyText: {
     ...typography.body,
-    color: colors.text.secondary,
+    color: colors.text.muted,
+    marginVertical: 6,
   },
-  cloudHint: {
+  syncNotice: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    marginTop: 8,
+    borderRadius: 10,
+    backgroundColor: "rgba(245, 166, 35, 0.10)",
+  },
+  projectChatSyncNotice: {
+    marginTop: 24,
+  },
+  syncNoticeText: {
     ...typography.caption,
-    color: colors.delta,
-    marginTop: 10,
+    color: colors.text.secondary,
+    flex: 1,
   },
   errorText: {
     ...typography.caption,
     color: colors.danger,
-    marginBottom: 8,
+    marginVertical: 8,
   },
-  rowCard: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 10,
+  row: {
     flexDirection: "row",
     alignItems: "center",
+    minHeight: 64,
+    paddingVertical: 9,
+    paddingRight: 3,
   },
-  chatRowCard: {
-    borderColor: "#D6EAF9",
-    backgroundColor: "#F8FBFE",
+  rowPressed: {
+    backgroundColor: colors.shadow.soft,
+  },
+  rowSeparator: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginLeft: 58,
+  },
+  rowAvatar: {
+    marginRight: 12,
+    flexShrink: 0,
   },
   chatRowDisabled: {
-    opacity: 0.6,
-  },
-  rowCardPressed: {
-    backgroundColor: "#F8FAFC",
-  },
-  ownerRowCard: {
-    borderColor: "#D6EAF9",
-    backgroundColor: "#F8FBFE",
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#F1F8FD",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
-  },
-  ownerAvatar: {
-    backgroundColor: colors.brand.blue,
-  },
-  avatarText: {
-    ...typography.bodyMedium,
-    color: colors.brand.blue,
-  },
-  ownerAvatarText: {
-    color: "#FFFFFF",
+    opacity: 0.55,
   },
   rowContent: {
     flex: 1,
-    paddingRight: 8,
+    minWidth: 0,
+    paddingRight: 10,
   },
   rowPrimary: {
     ...typography.bodyMedium,
     color: colors.text.primary,
   },
+  ownerRowPrimary: {
+    color: KEPLER_NAVY,
+  },
   rowSecondary: {
     ...typography.caption,
-    color: colors.text.secondary,
-    marginTop: 3,
+    color: colors.text.muted,
+    marginTop: 2,
   },
   rowWorkPackage: {
     ...typography.caption,
-    color: colors.text.primary,
-    marginTop: 6,
+    color: colors.brand.blue,
+    marginTop: 3,
   },
   rowWorkSummary: {
     ...typography.caption,
     color: colors.text.muted,
     marginTop: 2,
+  },
+  projectChatRow: {
+    minHeight: 72,
+    marginTop: 24,
+    borderRadius: 10,
+  },
+  pendingBadge: {
+    alignSelf: "center",
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: colors.shadow.soft,
+    marginLeft: 8,
+    flexShrink: 0,
+  },
+  pendingBadgeText: {
+    ...typography.metadata,
+    color: colors.text.secondary,
+    textTransform: "uppercase",
+  },
+  floatingAddButton: {
+    position: "absolute",
+    right: 18,
+    bottom: 22,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: KEPLER_NAVY,
+    shadowColor: KEPLER_NAVY,
+    shadowOffset: { width: 0, height: 7 },
+    shadowOpacity: 0.24,
+    shadowRadius: 12,
+    elevation: 7,
+    zIndex: 20,
+  },
+  floatingAddButtonPressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.95 }],
   },
 });

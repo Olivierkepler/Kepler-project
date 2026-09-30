@@ -32,7 +32,6 @@ import type { WorkPackage } from "../../types/workPackage";
 import type { WorkPackageAssignment } from "../../types/workPackageAssignment";
 import {
   formatMemberDisplayLabel,
-  memberDisplayInitial,
   type UserPresentationRecord,
 } from "../../utils/domain/memberDisplay";
 import { fetchMemberPresentationContext } from "../../utils/domain/memberPresentationContext";
@@ -46,6 +45,7 @@ import {
   buildTeamProjectWorkMaps,
 } from "../../utils/domain/teamMemberWork";
 import PlanItemCard from "./PlanItemCard";
+import UserAvatar from "../user/UserAvatar";
 
 export type OpenChatConversationParams = {
   remoteProjectId: string;
@@ -273,11 +273,11 @@ export default function ProjectTeamMemberContent({
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.headerCard}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>
-            {memberDisplayInitial(displayLabel)}
-          </Text>
-        </View>
+        <UserAvatar
+          imageUrl={profile?.avatarUrl}
+          size={64}
+          style={styles.headerAvatar}
+        />
 
         <Text style={styles.memberName} numberOfLines={2}>
           {displayLabel}
@@ -411,18 +411,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     alignItems: "center",
   },
-  avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#F1F8FD",
-    alignItems: "center",
-    justifyContent: "center",
+  headerAvatar: {
     marginBottom: 12,
-  },
-  avatarText: {
-    ...typography.title,
-    color: colors.brand.blue,
   },
   memberName: {
     ...typography.title,

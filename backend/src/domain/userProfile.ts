@@ -11,6 +11,8 @@ export type UserProfile = {
   displayName: string;
   /** Verified email snapshot from authenticated upsert; not used for auth. */
   email: string;
+  /** Private GCS object path for the user's profile photo. */
+  avatarStoragePath: string | null;
   createdAt: string;
   updatedAt: string;
 };

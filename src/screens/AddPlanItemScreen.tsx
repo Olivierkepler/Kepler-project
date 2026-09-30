@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Alert,
   ImageBackground,
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -37,6 +38,14 @@ import type {
 import {
   ensureRemotePlanItem,
 } from "../services/sync/planItemBootstrap";
+import { syncPlanItemImageToCloud } from "../services/sync/planItemImageSync";
+import {
+  deletePlanItemImageFile,
+  pickPlanItemImage,
+  persistPlanItemImage,
+  type PickedPlanItemImage,
+} from "../services/planItems/planItemImageLocal";
+import { markPlanItemImageSyncPending } from "../store/planItemImageSyncState";
 
 import {
   createPlanItem,
@@ -52,6 +61,7 @@ import type {
 
 import {
   PLAN_ITEM_CREATE_TYPES,
+  createLocalPlanItemId,
   defaultUnitForPlanItemType,
   isCurrentlyMeasurablePlanItemType,
   resolvePlanItemCreateFormNumerics,
@@ -165,6 +175,7 @@ export default function AddPlanItemScreen({
 }: Props) {
   const { user } =
     useAuth();
+  const [localPlanItemId] = useState(() => createLocalPlanItemId());
 
   const {
     projectId,
@@ -221,6 +232,44 @@ export default function AddPlanItemScreen({
     setSaving,
   ] =
     useState(false);
+
+  const [pickedImage, setPickedImage] =
+    useState<PickedPlanItemImage | null>(null);
+
+  const handlePickImage = async () => {
+    try {
+      if (!user?.uid) {
+        setError("Sign in to add a Plan Item image.");
+        return;
+      }
+      const picked = await pickPlanItemImage();
+      if (picked) {
+        const durableUri = await persistPlanItemImage(
+          user.uid,
+          projectId,
+          localPlanItemId,
+          picked.uri,
+          picked.contentType,
+        );
+        if (pickedImage) {
+          void deletePlanItemImageFile(
+            user.uid,
+            projectId,
+            localPlanItemId,
+            pickedImage.uri,
+          );
+        }
+        setPickedImage({ ...picked, uri: durableUri });
+        setError(null);
+      }
+    } catch (pickError) {
+      setError(
+        pickError instanceof Error
+          ? pickError.message
+          : "Unable to select the Plan Item image.",
+      );
+    }
+  };
 
   const unit =
     useMemo(
@@ -333,6 +382,8 @@ export default function AddPlanItemScreen({
 
       setSaving(true);
 
+      const durableImageUri = pickedImage?.uri ?? null;
+      let localItemCreated = false;
       try {
         const ownerUid =
           user.uid;
@@ -341,7 +392,21 @@ export default function AddPlanItemScreen({
           await createPlanItem(
             ownerUid,
             validated.value,
+            {
+              id: localPlanItemId,
+              ...(durableImageUri ? { imageUri: durableImageUri } : {}),
+            },
           );
+        localItemCreated = true;
+
+        if (durableImageUri) {
+          await markPlanItemImageSyncPending(
+            ownerUid,
+            projectId,
+            created.id,
+            "upload",
+          );
+        }
 
         /**
          * Local create already succeeded.
@@ -361,12 +426,32 @@ export default function AddPlanItemScreen({
             "Saved on this device",
             "Cloud sync is pending. The plan item is available locally.",
           );
+        } else if (durableImageUri) {
+          void syncPlanItemImageToCloud(ownerUid, projectId, created.id).catch(
+            () => undefined,
+          );
         }
 
         navigation.goBack();
       } catch (
         saveError
       ) {
+        if (localItemCreated) {
+          Alert.alert(
+            "Saved on this device",
+            "The Plan Item is saved locally. Image cloud sync will retry when available.",
+          );
+          navigation.goBack();
+          return;
+        }
+        if (!localItemCreated && durableImageUri) {
+          void deletePlanItemImageFile(
+            user.uid,
+            projectId,
+            localPlanItemId,
+            durableImageUri,
+          );
+        }
         const message =
           saveError
             instanceof Error
@@ -825,6 +910,56 @@ export default function AddPlanItemScreen({
                   }
                   accessibilityLabel="Production rate per day"
                 />
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.imageSection}>
+            <View style={styles.imagePreviewWrap}>
+              {pickedImage ? (
+                <Image
+                  source={{ uri: pickedImage.uri }}
+                  style={styles.imagePreview}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.imagePlaceholder}>
+                  <Ionicons name="image-outline" size={26} color={TEXT_MUTED} />
+                </View>
+              )}
+            </View>
+            <View style={styles.imageTextBlock}>
+              <Text style={styles.imageTitle}>Plan Item image</Text>
+              <Text style={styles.imageSubtitle}>Optional</Text>
+              <View style={styles.imageActions}>
+                <Pressable
+                  onPress={() => void handlePickImage()}
+                  disabled={saving}
+                  accessibilityRole="button"
+                  accessibilityLabel={pickedImage ? "Change Plan Item image" : "Add Plan Item image"}
+                >
+                  <Text style={styles.imageActionText}>{pickedImage ? "Change" : "Add image"}</Text>
+                </Pressable>
+                {pickedImage ? (
+                  <Pressable
+                    onPress={() => {
+                      if (user?.uid && pickedImage) {
+                        void deletePlanItemImageFile(
+                          user.uid,
+                          projectId,
+                          localPlanItemId,
+                          pickedImage.uri,
+                        );
+                      }
+                      setPickedImage(null);
+                    }}
+                    disabled={saving}
+                    accessibilityRole="button"
+                    accessibilityLabel="Remove Plan Item image"
+                  >
+                    <Text style={styles.imageRemoveText}>Remove</Text>
+                  </Pressable>
+                ) : null}
               </View>
             </View>
           </View>
@@ -1334,6 +1469,33 @@ const styles =
       position:
         "relative",
     },
+
+    imageSection: {
+      flexDirection: "row",
+      alignItems: "center",
+      padding: 14,
+      marginTop: 14,
+      backgroundColor: "rgba(255,255,255,0.76)",
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: "rgba(1,33,105,0.08)",
+      borderRadius: 14,
+    },
+    imagePreviewWrap: {
+      width: 62,
+      height: 62,
+      borderRadius: 31,
+      overflow: "hidden",
+      marginRight: 13,
+      backgroundColor: "#EEF2F6",
+    },
+    imagePreview: { width: 62, height: 62 },
+    imagePlaceholder: { flex: 1, alignItems: "center", justifyContent: "center" },
+    imageTextBlock: { flex: 1, minWidth: 0 },
+    imageTitle: { ...typography.bodyMedium, color: TEXT_PRIMARY, fontWeight: "600" },
+    imageSubtitle: { ...typography.caption, color: TEXT_MUTED, marginTop: 2 },
+    imageActions: { flexDirection: "row", alignItems: "center", gap: 16, marginTop: 7 },
+    imageActionText: { ...typography.caption, color: KEPLER_NAVY, fontWeight: "600" },
+    imageRemoveText: { ...typography.caption, color: TEXT_SECONDARY },
 
     /* ---------------------------------------------------------------------- */
     /* Shared Kepler Top Accent                                               */

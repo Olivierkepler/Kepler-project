@@ -14,6 +14,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 
 import { useAuth } from "../auth/AuthProvider";
 import type { RootStackParamList } from "../navigation/types";
+import { ensureRemoteProject } from "../services/sync/projectBootstrap";
 import {
   createProjectInvitation,
   type InvitableRemoteRole,
@@ -78,6 +79,8 @@ export default function InviteProjectMemberScreen({
   const [role, setRole] = useState<InvitableRemoteRole>("field_member");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -169,6 +172,36 @@ export default function InviteProjectMemberScreen({
     }
   };
 
+  const handleConnectProject = async () => {
+    if (!collaboration || connecting || remoteProjectId) {
+      return;
+    }
+
+    setConnectError(null);
+    setConnecting(true);
+
+    try {
+      const connectedRemoteProjectId = await ensureRemoteProject(
+        collaboration.storageOwnerUid,
+        projectId,
+      );
+
+      if (connectedRemoteProjectId) {
+        setRemoteProjectId(connectedRemoteProjectId);
+      } else {
+        setConnectError(
+          "Unable to connect this project to the cloud. Check your connection and try again.",
+        );
+      }
+    } catch {
+      setConnectError(
+        "Unable to connect this project to the cloud. Check your connection and try again.",
+      );
+    } finally {
+      setConnecting(false);
+    }
+  };
+
   if (project === undefined) {
     return (
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
@@ -227,9 +260,39 @@ export default function InviteProjectMemberScreen({
         </Text>
 
         {!cloudReady ? (
-          <Text style={styles.limitationText}>
-            Connect this project to the cloud before sending invitations.
-          </Text>
+          <>
+            <Text style={styles.limitationText}>
+              Connect this project to the cloud before sending invitations.
+            </Text>
+            <Pressable
+              style={({ pressed }) => [
+                styles.connectAction,
+                pressed && styles.connectActionPressed,
+              ]}
+              onPress={() => {
+                void handleConnectProject();
+              }}
+              disabled={connecting || !collaboration}
+              accessibilityRole="button"
+              accessibilityLabel="Connect project to cloud"
+              accessibilityState={{
+                disabled: connecting || !collaboration,
+                busy: connecting,
+              }}
+            >
+              {connecting ? (
+                <ActivityIndicator size="small" color={colors.brand.navy} />
+              ) : (
+                <Text style={styles.connectActionIcon}>☁</Text>
+              )}
+              <Text style={styles.connectActionText}>
+                {connecting ? "Connecting…" : "Connect project to cloud"}
+              </Text>
+            </Pressable>
+            {connectError ? (
+              <Text style={styles.connectErrorText}>{connectError}</Text>
+            ) : null}
+          </>
         ) : null}
 
         <Text style={styles.label}>EMAIL ADDRESS</Text>
@@ -242,7 +305,7 @@ export default function InviteProjectMemberScreen({
           keyboardType="email-address"
           autoCapitalize="none"
           autoCorrect={false}
-          editable={!saving && cloudReady}
+          editable={!saving}
           accessibilityLabel="Invitation email"
         />
 
@@ -258,7 +321,7 @@ export default function InviteProjectMemberScreen({
                 selected && styles.roleCardSelected,
               ]}
               onPress={() => setRole(option.role)}
-              disabled={saving || !cloudReady}
+              disabled={saving}
               accessibilityRole="button"
               accessibilityState={{ selected }}
               accessibilityLabel={`Select role ${option.label}`}
@@ -364,7 +427,33 @@ const styles = StyleSheet.create({
   limitationText: {
     ...typography.caption,
     color: colors.delta,
-    marginBottom: 16,
+    marginBottom: 2,
+  },
+  connectAction: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    paddingVertical: 6,
+    marginBottom: 14,
+  },
+  connectActionPressed: {
+    opacity: 0.7,
+  },
+  connectActionIcon: {
+    color: colors.brand.navy,
+    fontSize: 17,
+    lineHeight: 19,
+  },
+  connectActionText: {
+    ...typography.bodyMedium,
+    color: colors.brand.navy,
+  },
+  connectErrorText: {
+    ...typography.caption,
+    color: colors.danger,
+    marginTop: -8,
+    marginBottom: 14,
   },
   label: {
     ...typography.caption,

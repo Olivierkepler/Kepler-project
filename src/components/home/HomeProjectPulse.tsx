@@ -78,8 +78,18 @@ export default function HomeProjectPulse({
           </React.Fragment>
         ))}
       </View>
+
+
     </View>
   );
+
+
+
+
+
+
+
+
 }
 
 const styles = StyleSheet.create({

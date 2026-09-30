@@ -11,6 +11,14 @@ import {
   setWorkPackage,
 } from "../repositories/workPackagesRepository.js";
 import {
+  commitWorkPackageImage,
+  deleteWorkPackageImage,
+  presentWorkPackage,
+  presentWorkPackages,
+  requestWorkPackageImageUpload,
+  WorkPackageImageError,
+} from "../services/workPackageImageService.js";
+import {
   assertProjectAccessContext,
   canReadWorkPackageId,
   filterWorkPackagesForAccess,
@@ -23,10 +31,36 @@ import {
 } from "../validation/http.js";
 import {
   parseWorkPackageCreateInput,
+  parseWorkPackageImageCommitBody,
+  parseWorkPackageImageUploadUrlBody,
   parseWorkPackageUpdateInput,
 } from "../validation/workPackage.js";
 
 export const workPackagesRouter = Router();
+
+async function loadOwnedWorkPackageImageContext(input: {
+  uid: string;
+  projectId: string;
+  workPackageId: string;
+}) {
+  const project = await assertProjectOwnedByUser(input.projectId, input.uid);
+  const workPackage = await getWorkPackageById(input.workPackageId);
+  if (!workPackage || workPackage.projectId !== input.projectId) {
+    throw new WorkPackageImageError("Work package not found", 404);
+  }
+  return { project, workPackage };
+}
+
+async function handleWorkPackageImageRouteError(
+  res: import("express").Response,
+  error: unknown,
+): Promise<void> {
+  if (error instanceof WorkPackageImageError) {
+    sendError(res, error.statusCode, error.message);
+    return;
+  }
+  await handleRouteError(res, error);
+}
 
 /**
  * Ensures every planItemId is a canonical cloud PlanItem belonging to projectId.
@@ -66,7 +100,9 @@ workPackagesRouter.get(
 
       const access = await assertProjectAccessContext(projectId, uid);
       const items = await listWorkPackagesForProject(projectId);
-      res.status(200).json(filterWorkPackagesForAccess(items, access));
+      res.status(200).json(
+        await presentWorkPackages(filterWorkPackagesForAccess(items, access)),
+      );
     } catch (error) {
       await handleRouteError(res, error);
     }
@@ -104,7 +140,7 @@ workPackagesRouter.get(
         return;
       }
 
-      res.status(200).json(item);
+      res.status(200).json(await presentWorkPackage(item));
     } catch (error) {
       await handleRouteError(res, error);
     }
@@ -170,7 +206,7 @@ workPackagesRouter.post(
       };
 
       await setWorkPackage(workPackage);
-      res.status(201).json(workPackage);
+      res.status(201).json(await presentWorkPackage(workPackage));
     } catch (error) {
       await handleRouteError(res, error);
     }
@@ -243,6 +279,9 @@ workPackagesRouter.patch(
         name: update.name !== undefined ? update.name : existing.name,
         status: update.status !== undefined ? update.status : existing.status,
         planItemIds: [...nextPlanItemIds],
+        ...(existing.imageStoragePath !== undefined
+          ? { imageStoragePath: existing.imageStoragePath }
+          : {}),
         createdAt: existing.createdAt,
         updatedAt: nowIso,
       };
@@ -260,9 +299,121 @@ workPackagesRouter.patch(
       }
 
       await setWorkPackage(next);
-      res.status(200).json(next);
+      res.status(200).json(await presentWorkPackage(next));
     } catch (error) {
       await handleRouteError(res, error);
+    }
+  },
+);
+
+workPackagesRouter.post(
+  "/projects/:projectId/work-packages/:workPackageId/image/upload-url",
+  async (req, res) => {
+    try {
+      const uid = requireUserUid(req);
+      const projectId = req.params.projectId;
+      const workPackageId = req.params.workPackageId;
+      const parsed = parseWorkPackageImageUploadUrlBody(readBody(req));
+      if (!uid) {
+        sendError(res, 401, "Unauthorized");
+        return;
+      }
+      if (!projectId || !workPackageId) {
+        sendError(res, 400, "projectId and workPackageId are required");
+        return;
+      }
+      if (!parsed) {
+        sendError(res, 400, "Invalid Work Package image upload request");
+        return;
+      }
+      const { project, workPackage } = await loadOwnedWorkPackageImageContext({
+        uid,
+        projectId,
+        workPackageId,
+      });
+      const signed = await requestWorkPackageImageUpload({
+        uid,
+        projectOwnerUid: project.ownerUid,
+        projectId,
+        workPackage,
+        contentType: parsed.contentType,
+      });
+      res.status(200).json(signed);
+    } catch (error) {
+      await handleWorkPackageImageRouteError(res, error);
+    }
+  },
+);
+
+workPackagesRouter.post(
+  "/projects/:projectId/work-packages/:workPackageId/image/commit",
+  async (req, res) => {
+    try {
+      const uid = requireUserUid(req);
+      const projectId = req.params.projectId;
+      const workPackageId = req.params.workPackageId;
+      const parsed = parseWorkPackageImageCommitBody(readBody(req));
+      if (!uid) {
+        sendError(res, 401, "Unauthorized");
+        return;
+      }
+      if (!projectId || !workPackageId) {
+        sendError(res, 400, "projectId and workPackageId are required");
+        return;
+      }
+      if (!parsed) {
+        sendError(res, 400, "Invalid Work Package image commit request");
+        return;
+      }
+      const { project, workPackage } = await loadOwnedWorkPackageImageContext({
+        uid,
+        projectId,
+        workPackageId,
+      });
+      const presented = await commitWorkPackageImage({
+        uid,
+        projectOwnerUid: project.ownerUid,
+        projectId,
+        workPackage,
+        objectId: parsed.objectId,
+        contentType: parsed.contentType,
+      });
+      res.status(200).json(presented);
+    } catch (error) {
+      await handleWorkPackageImageRouteError(res, error);
+    }
+  },
+);
+
+workPackagesRouter.delete(
+  "/projects/:projectId/work-packages/:workPackageId/image",
+  async (req, res) => {
+    try {
+      const uid = requireUserUid(req);
+      const projectId = req.params.projectId;
+      const workPackageId = req.params.workPackageId;
+      if (!uid) {
+        sendError(res, 401, "Unauthorized");
+        return;
+      }
+      if (!projectId || !workPackageId) {
+        sendError(res, 400, "projectId and workPackageId are required");
+        return;
+      }
+      const { project, workPackage } = await loadOwnedWorkPackageImageContext({
+        uid,
+        projectId,
+        workPackageId,
+      });
+      const presented = await deleteWorkPackageImage({
+        uid,
+        projectOwnerUid: project.ownerUid,
+        projectId,
+        workPackage,
+      });
+      res.status(200).json(presented);
+    } catch (error) {
+      await handleWorkPackageImageRouteError(res, error);
     }
   },
 );

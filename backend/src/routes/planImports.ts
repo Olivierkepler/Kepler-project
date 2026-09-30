@@ -45,6 +45,7 @@ import {
   planImportCreatePayloadMatches,
   toPlanImportResponse,
 } from "../validation/planImport.js";
+import { presentPlanItems } from "../services/planItemImageService.js";
 
 export const planImportsRouter = Router();
 
@@ -715,7 +716,7 @@ planImportsRouter.post(
           createdPlanItemIds: result.createdPlanItemIds,
           createdCount: result.createdCount,
           alreadyApproved: result.alreadyApproved,
-          planItems: result.planItems,
+          planItems: await presentPlanItems(result.planItems),
         });
       } catch (error) {
         if (error instanceof PlanImportApprovalError) {

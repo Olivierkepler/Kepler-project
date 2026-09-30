@@ -2,9 +2,10 @@ import type { RemotePlanItem } from "../api/planItems";
 import type { RemoteProject } from "../api/projects";
 import { setPlanItemCloudMapping } from "../../store/planItemCloudMappings";
 import { setProjectCloudMapping } from "../../store/projectCloudMappings";
-import { addPlanItemsIfAbsent } from "../../store/planItems";
+import { addPlanItemsIfAbsent, getPlanItemsForProject } from "../../store/planItems";
 import { addProjectIfAbsent, getProjectById } from "../../store/projects";
 import type { PlanItem, PlanItemType } from "../../types/plan";
+import { downloadPlanItemImage } from "../planItems/planItemImageLocal";
 import type { Project, ProjectStatus } from "../../types/project";
 
 export type ImportCloudProjectResult = {
@@ -56,10 +57,12 @@ function toLocalProject(remote: RemoteProject): Project | undefined {
   };
 }
 
-function toLocalPlanItem(
+async function toLocalPlanItem(
   remote: RemotePlanItem,
   localProjectId: string,
-): PlanItem | undefined {
+  ownerUid: string,
+  downloadImage: boolean,
+): Promise<PlanItem | undefined> {
   if (!remote.localPlanItemId.trim()) {
     return undefined;
   }
@@ -68,7 +71,7 @@ function toLocalPlanItem(
     return undefined;
   }
 
-  return {
+  const local: PlanItem = {
     id: remote.localPlanItemId,
     projectId: localProjectId,
     type: remote.type,
@@ -79,6 +82,19 @@ function toLocalPlanItem(
     productionRatePerDay: remote.productionRatePerDay,
     laborHoursPerUnit: remote.laborHoursPerUnit,
   };
+  if (downloadImage && remote.imageUrl?.trim()) {
+    try {
+      local.imageUri = await downloadPlanItemImage(
+        ownerUid,
+        localProjectId,
+        remote.localPlanItemId,
+        remote.imageUrl,
+      );
+    } catch {
+      // Image download failure must not prevent importing the Plan Item.
+    }
+  }
+  return local;
 }
 
 /**
@@ -101,9 +117,16 @@ export async function importCloudProjectToDevice(
   }
 
   const localPlanItems: PlanItem[] = [];
+  const currentItems = await getPlanItemsForProject(ownerUid, localProject.id);
+  const existingItemIds = new Set(currentItems.map((item) => item.id));
 
   for (const remote of remotePlanItems) {
-    const converted = toLocalPlanItem(remote, localProject.id);
+    const converted = await toLocalPlanItem(
+      remote,
+      localProject.id,
+      ownerUid,
+      !existingItemIds.has(remote.localPlanItemId),
+    );
 
     if (!converted) {
       throw new Error("One or more planned quantities could not be imported.");

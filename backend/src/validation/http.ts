@@ -6,7 +6,13 @@ export function sendError(
   res: Response,
   status: number,
   message: string,
+  code?: string,
 ): void {
+  if (code) {
+    res.status(status).json({ error: message, code });
+    return;
+  }
+
   res.status(status).json({ error: message });
 }
 

@@ -65,11 +65,59 @@ export async function upsertUserProfile(input: {
     uid,
     displayName: input.displayName.trim(),
     email: input.email.trim(),
+    avatarStoragePath: existing?.avatarStoragePath ?? null,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
 
   await db.collection(COLLECTIONS.userProfiles).doc(uid).set(profile);
+
+  return profile;
+}
+
+export async function setUserProfileAvatarStoragePath(input: {
+  uid: string;
+  avatarStoragePath: string;
+}): Promise<UserProfile> {
+  requireUid(input.uid);
+
+  const uid = input.uid.trim();
+  const now = new Date().toISOString();
+  const existing = await getUserProfileByUid(uid);
+
+  if (!existing) {
+    throw new Error("User profile not found");
+  }
+
+  const profile: UserProfile = {
+    ...existing,
+    avatarStoragePath: input.avatarStoragePath.trim(),
+    updatedAt: now,
+  };
+
+  await db.collection(COLLECTIONS.userProfiles).doc(uid).set(profile);
+
+  return profile;
+}
+
+export async function clearUserProfileAvatar(uid: string): Promise<UserProfile> {
+  requireUid(uid);
+
+  const trimmedUid = uid.trim();
+  const now = new Date().toISOString();
+  const existing = await getUserProfileByUid(trimmedUid);
+
+  if (!existing) {
+    throw new Error("User profile not found");
+  }
+
+  const profile: UserProfile = {
+    ...existing,
+    avatarStoragePath: null,
+    updatedAt: now,
+  };
+
+  await db.collection(COLLECTIONS.userProfiles).doc(trimmedUid).set(profile);
 
   return profile;
 }

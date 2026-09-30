@@ -21,6 +21,8 @@ export type Conversation = {
   updatedAt: string;
   lastMessageAt: string | null;
   lastMessagePreview: string | null;
+  /** Private GCS path for a project conversation avatar; never sent to clients. */
+  avatarStoragePath?: string | null;
 };
 
 export type ConversationParticipant = {

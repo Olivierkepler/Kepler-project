@@ -120,6 +120,75 @@ export async function getAgentRun(
 }
 
 /**
+ * POST /api/projects/:remoteProjectId/agent-runs/:agentRunId/recover-evidence
+ * Owner-only reopen after unusable evidence. Does not upload Evidence.
+ */
+export async function recoverAgentRunEvidence(
+  remoteProjectId: string,
+  agentRunId: string,
+): Promise<AgentRunSummary> {
+  const response = await authenticatedFetch(
+    `/api/projects/${encodeURIComponent(remoteProjectId)}/agent-runs/${encodeURIComponent(agentRunId)}/recover-evidence`,
+    { method: "POST" },
+  );
+
+  const body = await readJson(response);
+
+  if (!response.ok) {
+    throw new Error(
+      parseErrorMessage(body, "Could not reopen this agent run for a new photo."),
+    );
+  }
+
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    !isAgentRunSummary((body as Record<string, unknown>).agentRun)
+  ) {
+    throw new Error("Could not reopen this agent run for a new photo.");
+  }
+
+  return (body as { agentRun: AgentRunSummary }).agentRun;
+}
+
+/**
+ * POST .../recover-request-evidence
+ * Owner-only reopen sticky running/assess_variance after request_evidence.
+ */
+export async function recoverStickyRequestEvidence(
+  remoteProjectId: string,
+  agentRunId: string,
+): Promise<AgentRunSummary> {
+  const response = await authenticatedFetch(
+    `/api/projects/${encodeURIComponent(remoteProjectId)}/agent-runs/${encodeURIComponent(agentRunId)}/recover-request-evidence`,
+    { method: "POST" },
+  );
+
+  const body = await readJson(response);
+
+  if (!response.ok) {
+    throw new Error(
+      parseErrorMessage(
+        body,
+        "Could not reopen this agent run for additional evidence.",
+      ),
+    );
+  }
+
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    !isAgentRunSummary((body as Record<string, unknown>).agentRun)
+  ) {
+    throw new Error(
+      "Could not reopen this agent run for additional evidence.",
+    );
+  }
+
+  return (body as { agentRun: AgentRunSummary }).agentRun;
+}
+
+/**
  * GET /api/projects/:remoteProjectId/agent-summaries/:summaryId
  */
 export async function getAgentSummary(

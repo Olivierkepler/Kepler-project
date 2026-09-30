@@ -101,6 +101,47 @@ export async function createConversationIfAbsent(
   }
 }
 
+export async function updateConversationAvatarStoragePath(input: {
+  conversationId: string;
+  avatarStoragePath: string | null;
+}): Promise<{
+  conversation: Conversation;
+  previousAvatarStoragePath: string | null;
+} | undefined> {
+  requireId(input.conversationId, "conversationId");
+  if (
+    input.avatarStoragePath !== null &&
+    !input.avatarStoragePath.trim()
+  ) {
+    throw new Error("avatarStoragePath must be non-empty or null");
+  }
+
+  const ref = db
+    .collection(COLLECTIONS.conversations)
+    .doc(input.conversationId.trim());
+
+  return db.runTransaction(async (tx) => {
+    const snapshot = await tx.get(ref);
+    if (!snapshot.exists) {
+      return undefined;
+    }
+
+    const current = normalizeConversationDocument(snapshot.data());
+    if (!current || current.type !== "project") {
+      return undefined;
+    }
+
+    const previousAvatarStoragePath = current.avatarStoragePath ?? null;
+    const conversation: Conversation = {
+      ...current,
+      avatarStoragePath: input.avatarStoragePath,
+    };
+
+    tx.update(ref, { avatarStoragePath: input.avatarStoragePath });
+    return { conversation, previousAvatarStoragePath };
+  });
+}
+
 export async function updateConversationLastMessage(input: {
   conversationId: string;
   lastMessageAt: string;

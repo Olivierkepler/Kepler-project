@@ -33,9 +33,7 @@ import HomeActivityFeed from "../components/home/feed/HomeActivityFeed";
 import CreateProjectUpdateModal from "../components/home/feed/CreateProjectUpdateModal";
 import EditProjectUpdateModal from "../components/home/feed/EditProjectUpdateModal";
 import FeedCommentsModal from "../components/home/feed/FeedCommentsModal";
-import HomeFeedComposer, {
-  type ComposerLaunchMode,
-} from "../components/home/feed/HomeFeedComposer";
+import type { ComposerLaunchMode } from "../components/home/feed/HomeFeedComposer";
 
 import useHomeActivityFeed from "../hooks/useHomeActivityFeed";
 import useHomeDashboard from "../hooks/useHomeDashboard";
@@ -331,9 +329,12 @@ export default function HomeScreen({
                   .getParent()
                   ?.navigate("Search");
               }}
+              onComposePress={() =>
+                openComposer("text")
+              }
             />
 
-            <HomeProjectPulse
+            {/* <HomeProjectPulse
               activeProjectCount={
                 dashboard.activeProjectCount
               }
@@ -348,12 +349,7 @@ export default function HomeScreen({
               measurementCount={
                 dashboard.measurementCount
               }
-            />
-
-            <HomeFeedComposer
-              userInitial={userInitial}
-              onOpenComposer={openComposer}
-            />
+            /> */}
 
             <HomeActivityFeed
               humanPosts={humanPosts}
@@ -485,7 +481,7 @@ const styles = StyleSheet.create({
   },
 
   content: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 0,
     paddingTop: 4,
   },
 

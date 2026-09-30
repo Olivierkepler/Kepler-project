@@ -3,6 +3,10 @@ import {
   type WorkPackage,
   type WorkPackageStatus,
 } from "../domain/workPackage.js";
+import {
+  isAllowedWorkPackageImageContentType,
+  isWorkPackageImageObjectId,
+} from "../storage/workPackageImageStorage.js";
 import { isNonEmptyString, isRecord } from "./primitives.js";
 
 export function isWorkPackageStatus(
@@ -204,6 +208,15 @@ export function normalizeWorkPackageDocument(
       ? data.description
       : undefined;
 
+  const imageStoragePath = data.imageStoragePath;
+  if (
+    imageStoragePath !== undefined &&
+    imageStoragePath !== null &&
+    !isNonEmptyString(imageStoragePath)
+  ) {
+    return undefined;
+  }
+
   return {
     id: data.id.trim(),
     projectId: data.projectId.trim(),
@@ -211,7 +224,32 @@ export function normalizeWorkPackageDocument(
     ...(description !== undefined ? { description } : {}),
     status: data.status,
     planItemIds,
+    ...(imageStoragePath !== undefined
+      ? { imageStoragePath: imageStoragePath === null ? null : imageStoragePath.trim() }
+      : {}),
     createdAt: data.createdAt.trim(),
     updatedAt: data.updatedAt.trim(),
   };
+}
+
+export function parseWorkPackageImageUploadUrlBody(
+  body: unknown,
+): { contentType: string } | null {
+  if (!isRecord(body) || !isNonEmptyString(body.contentType)) return null;
+  const contentType = body.contentType.trim().toLowerCase();
+  return isAllowedWorkPackageImageContentType(contentType) ? { contentType } : null;
+}
+
+export function parseWorkPackageImageCommitBody(
+  body: unknown,
+): { objectId: string; contentType: string } | null {
+  if (!isRecord(body) || !isNonEmptyString(body.objectId) || !isNonEmptyString(body.contentType)) {
+    return null;
+  }
+  const objectId = body.objectId.trim().toLowerCase();
+  const contentType = body.contentType.trim().toLowerCase();
+  if (!isWorkPackageImageObjectId(objectId) || !isAllowedWorkPackageImageContentType(contentType)) {
+    return null;
+  }
+  return { objectId, contentType };
 }

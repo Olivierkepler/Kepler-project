@@ -1,5 +1,7 @@
 import type { AgentRun } from "../domain/agentRun.js";
 import type { AgentSummary } from "../domain/agentSummary.js";
+import { isEligibleForFailedEvidenceRecovery } from "../domain/recoverableEvidenceFailure.js";
+import { isEligibleForStickyRequestEvidenceRecovery } from "../domain/stickyRequestEvidenceRecovery.js";
 
 export type AgentRunPendingRequestDTO = {
   kind: "delta_evidence";
@@ -34,6 +36,16 @@ export type AgentRunSummaryDTO = {
   completedAt: string | null;
   lastEvidenceId: string | null;
   deltaContext: AgentRunDeltaContextDTO;
+  /**
+   * Owner may call recover-evidence for this failed unusable-evidence run.
+   * Backward-compatible additive field; false for non-recoverable states.
+   */
+  canRecoverEvidence: boolean;
+  /**
+   * Owner may call recover-request-evidence for sticky running/assess_variance
+   * after request_evidence fall-through. Distinct from media recover-evidence.
+   */
+  canRecoverStickyRequestEvidence: boolean;
 };
 
 export type AgentSummaryEvidenceAssessmentDTO = {
@@ -100,6 +112,9 @@ export function toAgentRunSummaryDTO(agentRun: AgentRun): AgentRunSummaryDTO {
       localMeasurementId: agentRun.contextRefs.localMeasurementId,
       remotePlanItemId: agentRun.contextRefs.remotePlanItemId,
     },
+    canRecoverEvidence: isEligibleForFailedEvidenceRecovery(agentRun),
+    canRecoverStickyRequestEvidence:
+      isEligibleForStickyRequestEvidenceRecovery(agentRun),
   };
 }
 

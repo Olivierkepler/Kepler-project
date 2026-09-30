@@ -40,7 +40,12 @@ import {
 
 import {
   createProject,
+  updateProject,
 } from "../store/projects";
+
+import {
+  persistProjectImage,
+} from "../services/projects/projectImageLocal";
 
 import type {
   ProjectStatus,
@@ -312,9 +317,33 @@ export default function CreateProjectScreen({
             ownerUid,
             {
               ...validated.value,
-              avatarUri,
+              avatarUri: null,
             },
           );
+
+        if (avatarUri) {
+          try {
+            const durableAvatarUri = await persistProjectImage(
+              ownerUid,
+              created.id,
+              avatarUri,
+            );
+            const projectWithImage = await updateProject(
+              ownerUid,
+              created.id,
+              { avatarUri: durableAvatarUri },
+            );
+
+            if (!projectWithImage) {
+              throw new Error("Project not found.");
+            }
+          } catch {
+            Alert.alert(
+              "Project saved without image",
+              "The image could not be saved. You can add it later by editing the project.",
+            );
+          }
+        }
 
         /**
          * Local create already succeeded.

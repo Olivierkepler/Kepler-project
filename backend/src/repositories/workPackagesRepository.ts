@@ -114,6 +114,45 @@ export async function setWorkPackage(workPackage: WorkPackage): Promise<void> {
     .set(normalized, { merge: false });
 }
 
+export type WorkPackageImagePathUpdate = {
+  workPackage: WorkPackage;
+  previousImageStoragePath: string | null;
+};
+
+/** Atomically changes only the private image path for the matching project package. */
+export async function updateWorkPackageImageStoragePath(input: {
+  projectId: string;
+  workPackageId: string;
+  imageStoragePath: string | null;
+}): Promise<WorkPackageImagePathUpdate | undefined> {
+  requireId(input.projectId, "projectId");
+  requireId(input.workPackageId, "workPackageId");
+
+  const reference = db.collection(COLLECTIONS.workPackages).doc(input.workPackageId);
+  let result: WorkPackageImagePathUpdate | undefined;
+
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(reference);
+    if (!snapshot.exists) return;
+
+    const existing = normalizeWorkPackageDocument(snapshot.data());
+    if (!existing || existing.projectId !== input.projectId) return;
+
+    const previousImageStoragePath = existing.imageStoragePath?.trim() || null;
+    const updatedAt = new Date().toISOString();
+    transaction.update(reference, {
+      imageStoragePath: input.imageStoragePath,
+      updatedAt,
+    });
+    result = {
+      workPackage: { ...existing, imageStoragePath: input.imageStoragePath, updatedAt },
+      previousImageStoragePath,
+    };
+  });
+
+  return result;
+}
+
 /**
  * Deletes WorkPackage metadata by document ID.
  * Returns false when already absent.

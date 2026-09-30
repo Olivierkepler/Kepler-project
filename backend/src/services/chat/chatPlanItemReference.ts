@@ -7,6 +7,7 @@
 import { ProjectAccessError } from "../../auth/projectAccess.js";
 import type { ChatMessageReference } from "../../domain/chatMessage.js";
 import type { PlanItem } from "../../domain/planItem.js";
+import { presentPlanItem } from "../planItemImageService.js";
 import {
   getPlanItemById,
   getPlanItemsForProject,
@@ -31,6 +32,7 @@ export type ChatPlanItemReferencePresentation = {
   statusLabel: string | null;
   latestFieldValue: number | null;
   variance: number | null;
+  imageUrl?: string;
 };
 
 function typeLabelFor(type: PlanItem["type"]): string {
@@ -166,6 +168,7 @@ export async function resolveChatPlanItemPresentations(input: {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const latest = scopedMeasurements[0] ?? null;
 
+    const presentation = await presentPlanItem(planItem);
     result[planItemId] = {
       planItemId,
       available: true,
@@ -177,6 +180,7 @@ export async function resolveChatPlanItemPresentations(input: {
       statusLabel: latest ? "Measured" : "Awaiting field",
       latestFieldValue: latest ? latest.value : null,
       variance: latest ? latest.value - planItem.plannedValue : null,
+      ...(presentation.imageUrl ? { imageUrl: presentation.imageUrl } : {}),
     };
   }
 

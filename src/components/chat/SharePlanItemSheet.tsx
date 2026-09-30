@@ -12,11 +12,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@expo/vector-icons/Ionicons";
 
 import { listMessageableMembers } from "../../services/api/conversations";
+import UserAvatar from "../user/UserAvatar";
 import type { ChatParticipantPresentation } from "../../types/chat";
 import { colors, typography } from "../../theme/colors";
 import {
   formatMemberDisplayLabel,
-  memberDisplayInitial,
 } from "../../utils/domain/memberDisplay";
 import { formatProjectMemberRoleLabel } from "../../utils/domain/memberRoleLabels";
 
@@ -187,11 +187,11 @@ export default function SharePlanItemSheet({
                 accessibilityRole="button"
                 accessibilityLabel={`Share to ${label}`}
               >
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>
-                    {memberDisplayInitial(label)}
-                  </Text>
-                </View>
+                <UserAvatar
+                  imageUrl={member.avatarUrl}
+                  size={44}
+                  style={styles.rowAvatar}
+                />
                 <View style={styles.rowCopy}>
                   <Text style={styles.rowPrimary} numberOfLines={1}>
                     {label}
@@ -282,18 +282,9 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
     marginTop: 2,
   },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#F1F8FD",
-    alignItems: "center",
-    justifyContent: "center",
+  rowAvatar: {
     marginRight: 12,
-  },
-  avatarText: {
-    ...typography.bodyMedium,
-    color: colors.brand.blue,
+    flexShrink: 0,
   },
   loader: {
     marginVertical: 16,

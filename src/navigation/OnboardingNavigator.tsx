@@ -1,7 +1,4 @@
-import React, {
-  createContext,
-  useContext,
-} from "react";
+import React from "react";
 
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
@@ -10,33 +7,12 @@ import OnboardingPlanScreen from "../screens/onboarding/OnboardingPlanScreen";
 import OnboardingReconcileScreen from "../screens/onboarding/OnboardingReconcileScreen";
 import OnboardingWelcomeScreen from "../screens/onboarding/OnboardingWelcomeScreen";
 
+import { OnboardingCompleteContext } from "./onboardingComplete";
+import type { OnboardingStackParamList } from "./types";
 import { colors } from "../theme/colors";
-
-export type OnboardingStackParamList = {
-  OnboardingWelcome: undefined;
-  OnboardingPlan: undefined;
-  OnboardingCapture: undefined;
-  OnboardingReconcile: undefined;
-};
 
 const Stack =
   createNativeStackNavigator<OnboardingStackParamList>();
-
-const OnboardingCompleteContext =
-  createContext<(() => void) | null>(null);
-
-export function useOnboardingComplete(): () => void {
-  const complete =
-    useContext(OnboardingCompleteContext);
-
-  if (!complete) {
-    throw new Error(
-      "useOnboardingComplete must be used within OnboardingNavigator",
-    );
-  }
-
-  return complete;
-}
 
 type Props = {
   onComplete: () => void;

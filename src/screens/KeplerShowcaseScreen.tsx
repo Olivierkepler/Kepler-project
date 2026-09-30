@@ -106,11 +106,12 @@ import React, {
               ]}
             >
               <KeplerLogo
-                width={350}
-                height={154}
+                width={210}
+                height={92}
                 autoPlay
               />
         
+
             </Animated.View>
           </View>
         </SafeAreaView>

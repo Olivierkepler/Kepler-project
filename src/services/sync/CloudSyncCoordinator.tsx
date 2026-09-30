@@ -26,6 +26,7 @@ function wasNonActive(state: AppStateStatus): boolean {
  * Single authenticated lifecycle coordinator for narrow cloud sync:
  * - pending Project updates
  * - pending PlanItem updates
+ * - pending PlanItem image uploads/removals
  * - pending Evidence deletes
  * - pending Evidence uploads
  * - pending Measurement uploads (ensures Project + PlanItem prerequisites)

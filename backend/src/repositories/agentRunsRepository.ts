@@ -9,12 +9,22 @@ import {
 import {
   applyAgentRunAttemptIncrement,
   applyAgentRunStateUpdate,
+  applyRecoverFailedFieldVarianceEvidence,
+  applyRecoverStickyRequestEvidence,
+  applyRequestAdditionalDeltaEvidence,
   applyRequestDeltaEvidence,
+  applyRequestReplacementDeltaEvidence,
   applyResumeFromDeltaEvidence,
   buildQueuedAgentRun,
   normalizeAgentRun,
+  type RecoverFailedFieldVarianceEvidenceInput,
+  type RecoverFailedFieldVarianceEvidenceResult,
+  type RecoverStickyRequestEvidenceInput,
+  type RecoverStickyRequestEvidenceResult,
+  type RequestAdditionalDeltaEvidenceInput,
   type RequestDeltaEvidenceInput,
   type RequestDeltaEvidenceResult,
+  type RequestReplacementDeltaEvidenceInput,
   type ResumeFromDeltaEvidenceInput,
   type ResumeFromDeltaEvidenceResult,
 } from "../validation/agentRun.js";
@@ -202,6 +212,226 @@ export async function requestDeltaEvidence(
 
   if (
     result.outcome === "created" &&
+    result.agentRun.status === "waiting_for_evidence"
+  ) {
+    try {
+      const { getProjectById } = await import("./projectsRepository.js");
+      const { projectAgentRunStateActivity } = await import(
+        "../services/activity/projectActivityProjections.js"
+      );
+      const project = await getProjectById(result.agentRun.projectId);
+      if (project) {
+        await projectAgentRunStateActivity({
+          agentRun: result.agentRun,
+          status: "waiting_for_evidence",
+          projectOwnerUid: project.ownerUid,
+        });
+      }
+    } catch {
+      // Activity projection is best-effort.
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Atomic replacement Evidence request when submitted media is unusable.
+ * running → waiting_for_evidence even if direct Delta Evidence already exists.
+ */
+export async function requestReplacementDeltaEvidence(
+  agentRunId: string,
+  input: RequestReplacementDeltaEvidenceInput = {},
+): Promise<RequestDeltaEvidenceResult> {
+  requireId(agentRunId, "agentRunId");
+
+  const ref = agentRunsCollection().doc(agentRunId);
+
+  const result = await db.runTransaction(async (tx) => {
+    const snapshot = await tx.get(ref);
+
+    if (!snapshot.exists) {
+      throw new AgentRunError("not_found", "AgentRun not found");
+    }
+
+    const current = normalizeAgentRun(snapshot.data());
+    const applied = applyRequestReplacementDeltaEvidence(current, input);
+
+    if (applied.outcome === "existing") {
+      return applied;
+    }
+
+    tx.set(ref, applied.agentRun, { merge: false });
+    return applied;
+  });
+
+  if (
+    result.outcome === "created" &&
+    result.agentRun.status === "waiting_for_evidence"
+  ) {
+    try {
+      const { getProjectById } = await import("./projectsRepository.js");
+      const { projectAgentRunStateActivity } = await import(
+        "../services/activity/projectActivityProjections.js"
+      );
+      const project = await getProjectById(result.agentRun.projectId);
+      if (project) {
+        await projectAgentRunStateActivity({
+          agentRun: result.agentRun,
+          status: "waiting_for_evidence",
+          projectOwnerUid: project.ownerUid,
+        });
+      }
+    } catch {
+      // Activity projection is best-effort.
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Atomic additional Evidence request after post-analysis request_evidence
+ * when Delta Evidence already exists. Retains lastEvidenceId; no media category.
+ */
+export async function requestAdditionalDeltaEvidence(
+  agentRunId: string,
+  input: RequestAdditionalDeltaEvidenceInput = {},
+): Promise<RequestDeltaEvidenceResult> {
+  requireId(agentRunId, "agentRunId");
+
+  const ref = agentRunsCollection().doc(agentRunId);
+
+  const result = await db.runTransaction(async (tx) => {
+    const snapshot = await tx.get(ref);
+
+    if (!snapshot.exists) {
+      throw new AgentRunError("not_found", "AgentRun not found");
+    }
+
+    const current = normalizeAgentRun(snapshot.data());
+    const applied = applyRequestAdditionalDeltaEvidence(current, input);
+
+    if (applied.outcome === "existing") {
+      return applied;
+    }
+
+    tx.set(ref, applied.agentRun, { merge: false });
+    return applied;
+  });
+
+  if (
+    result.outcome === "created" &&
+    result.agentRun.status === "waiting_for_evidence"
+  ) {
+    try {
+      const { getProjectById } = await import("./projectsRepository.js");
+      const { projectAgentRunStateActivity } = await import(
+        "../services/activity/projectActivityProjections.js"
+      );
+      const project = await getProjectById(result.agentRun.projectId);
+      if (project) {
+        await projectAgentRunStateActivity({
+          agentRun: result.agentRun,
+          status: "waiting_for_evidence",
+          projectOwnerUid: project.ownerUid,
+        });
+      }
+    } catch {
+      // Activity projection is best-effort.
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Narrow owner-driven recovery for sticky running/assess_variance after
+ * request_evidence fall-through. Does not enqueue tasks or create Evidence.
+ */
+export async function recoverStickyRequestEvidence(
+  agentRunId: string,
+  input: RecoverStickyRequestEvidenceInput = {},
+): Promise<RecoverStickyRequestEvidenceResult> {
+  requireId(agentRunId, "agentRunId");
+
+  const ref = agentRunsCollection().doc(agentRunId);
+
+  const result = await db.runTransaction(async (tx) => {
+    const snapshot = await tx.get(ref);
+
+    if (!snapshot.exists) {
+      throw new AgentRunError("not_found", "AgentRun not found");
+    }
+
+    const current = normalizeAgentRun(snapshot.data());
+    const applied = applyRecoverStickyRequestEvidence(current, input);
+
+    if (applied.outcome === "existing") {
+      return applied;
+    }
+
+    tx.set(ref, applied.agentRun, { merge: false });
+    return applied;
+  });
+
+  if (
+    result.outcome === "recovered" &&
+    result.agentRun.status === "waiting_for_evidence"
+  ) {
+    try {
+      const { getProjectById } = await import("./projectsRepository.js");
+      const { projectAgentRunStateActivity } = await import(
+        "../services/activity/projectActivityProjections.js"
+      );
+      const project = await getProjectById(result.agentRun.projectId);
+      if (project) {
+        await projectAgentRunStateActivity({
+          agentRun: result.agentRun,
+          status: "waiting_for_evidence",
+          projectOwnerUid: project.ownerUid,
+        });
+      }
+    } catch {
+      // Activity projection is best-effort.
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Narrow owner-driven recovery for legacy failed Field Variance runs whose
+ * errorCategory indicates recoverable unusable evidence. Does not enqueue tasks.
+ */
+export async function recoverFailedFieldVarianceEvidence(
+  agentRunId: string,
+  input: RecoverFailedFieldVarianceEvidenceInput = {},
+): Promise<RecoverFailedFieldVarianceEvidenceResult> {
+  requireId(agentRunId, "agentRunId");
+
+  const ref = agentRunsCollection().doc(agentRunId);
+
+  const result = await db.runTransaction(async (tx) => {
+    const snapshot = await tx.get(ref);
+
+    if (!snapshot.exists) {
+      throw new AgentRunError("not_found", "AgentRun not found");
+    }
+
+    const current = normalizeAgentRun(snapshot.data());
+    const applied = applyRecoverFailedFieldVarianceEvidence(current, input);
+
+    if (applied.outcome === "existing") {
+      return applied;
+    }
+
+    tx.set(ref, applied.agentRun, { merge: false });
+    return applied;
+  });
+
+  if (
+    result.outcome === "recovered" &&
     result.agentRun.status === "waiting_for_evidence"
   ) {
     try {

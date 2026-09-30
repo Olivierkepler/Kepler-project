@@ -16,6 +16,7 @@ import {
   buildFieldVarianceAgentRunId,
   buildFieldVarianceIdempotencyKey,
   canTransitionAgentRunStatus,
+  isTerminalAgentRunStatus,
   type AgentRun,
   type CreateAgentRunInput,
 } from "../domain/agentRun.js";
@@ -290,12 +291,24 @@ function runPureTests(): void {
     "24. running → escalated allowed",
   );
   assert(
+    canTransitionAgentRunStatus("running", "queued"),
+    "24b. running → queued allowed for transient provider requeue",
+  );
+  assert(
     !canTransitionAgentRunStatus("completed", "running"),
     "25. completed → running rejected",
   );
   assert(
     !canTransitionAgentRunStatus("failed", "running"),
     "26. failed → running rejected",
+  );
+  assert(
+    canTransitionAgentRunStatus("failed", "waiting_for_evidence"),
+    "26b. failed → waiting_for_evidence allowed for evidence recovery",
+  );
+  assert(
+    isTerminalAgentRunStatus("failed"),
+    "26c. failed remains terminal for start/resume guards",
   );
   assert(
     !canTransitionAgentRunStatus("escalated", "running"),

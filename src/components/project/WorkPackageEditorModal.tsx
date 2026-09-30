@@ -13,6 +13,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { colors, typography } from "../../theme/colors";
 import type { WorkPackageStatus } from "../../types/workPackage";
+import WorkPackageImage from "./WorkPackageImage";
+import {
+  pickWorkPackageImage,
+  type PickedWorkPackageImage,
+} from "../../services/workPackages/workPackageImage";
 
 export type WorkPackagePlanItemOption = {
   id: string;
@@ -24,11 +29,15 @@ export type WorkPackageFormValues = {
   description: string;
   status: WorkPackageStatus;
   planItemIds: string[];
+  pickedImage?: PickedWorkPackageImage | null;
+  removeImage?: boolean;
 };
 
 type Props = {
   visible: boolean;
   mode: "create" | "edit";
+  nameOnly?: boolean;
+  imageUrl?: string | null;
   initial?: WorkPackageFormValues | null;
   planItems: WorkPackagePlanItemOption[];
   saving: boolean;
@@ -79,6 +88,8 @@ export function formatWorkPackageStatusLabel(
 export default function WorkPackageEditorModal({
   visible,
   mode,
+  nameOnly = false,
+  imageUrl = null,
   initial,
   planItems,
   saving,
@@ -91,6 +102,9 @@ export default function WorkPackageEditorModal({
   const [status, setStatus] = useState<WorkPackageStatus>("draft");
   const [planItemIds, setPlanItemIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [pickedImage, setPickedImage] = useState<PickedWorkPackageImage | null>(null);
+  const [removeImage, setRemoveImage] = useState(false);
+  const [imageActionBusy, setImageActionBusy] = useState(false);
 
   useEffect(() => {
     if (!visible) {
@@ -102,8 +116,10 @@ export default function WorkPackageEditorModal({
     setDescription(seed.description);
     setStatus(seed.status);
     setPlanItemIds([...seed.planItemIds]);
+    setPickedImage(null);
+    setRemoveImage(false);
     setError(null);
-  }, [visible, initial]);
+  }, [visible, initial, imageUrl]);
 
   const selectedSet = useMemo(() => new Set(planItemIds), [planItemIds]);
 
@@ -129,8 +145,33 @@ export default function WorkPackageEditorModal({
       description,
       status,
       planItemIds: [...planItemIds],
+      pickedImage,
+      removeImage,
     });
   };
+
+  const handleChangeImage = async () => {
+    if (saving || imageActionBusy) return;
+    setImageActionBusy(true);
+    try {
+      const selected = await pickWorkPackageImage();
+      if (selected) {
+        setPickedImage(selected);
+        setRemoveImage(false);
+        setError(null);
+      }
+    } catch (pickError) {
+      setError(
+        pickError instanceof Error
+          ? pickError.message
+          : "Unable to choose a Work Package image.",
+      );
+    } finally {
+      setImageActionBusy(false);
+    }
+  };
+
+  const previewUri = pickedImage?.uri ?? (!removeImage ? imageUrl : null);
 
   return (
     <Modal
@@ -148,7 +189,7 @@ export default function WorkPackageEditorModal({
         <View style={styles.topBar}>
           <Pressable
             onPress={onClose}
-            disabled={saving}
+            disabled={saving || imageActionBusy}
             accessibilityRole="button"
             accessibilityLabel="Cancel work package editor"
             hitSlop={8}
@@ -160,7 +201,7 @@ export default function WorkPackageEditorModal({
           </Text>
           <Pressable
             onPress={handleSubmit}
-            disabled={saving}
+            disabled={saving || imageActionBusy}
             accessibilityRole="button"
             accessibilityLabel={
               mode === "create" ? "Save work package" : "Update work package"
@@ -181,7 +222,46 @@ export default function WorkPackageEditorModal({
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.fieldLabel}>NAME</Text>
+          {nameOnly && mode === "edit" ? (
+            <View style={styles.imageSection}>
+              <Text style={styles.fieldLabel}>WORK PACKAGE IMAGE</Text>
+              <View style={styles.imageActionsRow}>
+                <WorkPackageImage uri={previewUri} size={74} radius={13} />
+                <View style={styles.imageActions}>
+                  <Pressable
+                    onPress={() => void handleChangeImage()}
+                    disabled={saving || imageActionBusy}
+                    accessibilityRole="button"
+                    accessibilityLabel="Change Work Package image"
+                    style={styles.imageActionButton}
+                  >
+                    <Text style={styles.imageActionText}>
+                      {imageActionBusy ? "Opening…" : "Change"}
+                    </Text>
+                  </Pressable>
+                  {previewUri ? (
+                    <Pressable
+                      onPress={() => {
+                        setPickedImage(null);
+                        setRemoveImage(true);
+                      }}
+                      disabled={saving || imageActionBusy}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove Work Package image"
+                      style={styles.imageActionButton}
+                    >
+                      <Text style={styles.imageRemoveText}>Remove</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              </View>
+              <Text style={styles.helper}>Optional</Text>
+            </View>
+          ) : null}
+
+          <Text style={styles.fieldLabel}>
+            {nameOnly ? "WORK PACKAGE NAME" : "NAME"}
+          </Text>
           <TextInput
             style={styles.input}
             value={name}
@@ -192,87 +272,91 @@ export default function WorkPackageEditorModal({
             accessibilityLabel="Work package name"
           />
 
-          <Text style={styles.fieldLabel}>DESCRIPTION</Text>
-          <TextInput
-            style={[styles.input, styles.multiline]}
-            value={description}
-            onChangeText={setDescription}
-            placeholder="Optional scope notes"
-            placeholderTextColor={colors.text.muted}
-            editable={!saving}
-            multiline
-            accessibilityLabel="Work package description"
-          />
+          {!nameOnly ? (
+            <>
+              <Text style={styles.fieldLabel}>DESCRIPTION</Text>
+              <TextInput
+                style={[styles.input, styles.multiline]}
+                value={description}
+                onChangeText={setDescription}
+                placeholder="Optional scope notes"
+                placeholderTextColor={colors.text.muted}
+                editable={!saving}
+                multiline
+                accessibilityLabel="Work package description"
+              />
 
-          <Text style={styles.fieldLabel}>STATUS</Text>
-          <View style={styles.chipRow}>
-            {STATUS_OPTIONS.map((option) => {
-              const selected = status === option.value;
-              return (
-                <Pressable
-                  key={option.value}
-                  style={[styles.chip, selected && styles.chipSelected]}
-                  onPress={() => setStatus(option.value)}
-                  disabled={saving}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  accessibilityLabel={`Status ${option.label}`}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      selected && styles.chipTextSelected,
-                    ]}
-                  >
-                    {option.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+              <Text style={styles.fieldLabel}>STATUS</Text>
+              <View style={styles.chipRow}>
+                {STATUS_OPTIONS.map((option) => {
+                  const selected = status === option.value;
+                  return (
+                    <Pressable
+                      key={option.value}
+                      style={[styles.chip, selected && styles.chipSelected]}
+                      onPress={() => setStatus(option.value)}
+                      disabled={saving}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      accessibilityLabel={`Status ${option.label}`}
+                    >
+                      <Text
+                        style={[
+                          styles.chipText,
+                          selected && styles.chipTextSelected,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
 
-          <Text style={styles.fieldLabel}>PLAN ITEMS</Text>
-          <Text style={styles.helper}>
-            Select existing plan items for this scope. Empty is allowed.
-          </Text>
+              <Text style={styles.fieldLabel}>PLAN ITEMS</Text>
+              <Text style={styles.helper}>
+                Select existing plan items for this scope. Empty is allowed.
+              </Text>
 
-          {planItems.length === 0 ? (
-            <Text style={styles.emptyPlanItems}>
-              No plan items available on this project yet.
-            </Text>
-          ) : (
-            planItems.map((item) => {
-              const selected = selectedSet.has(item.id);
-              return (
-                <Pressable
-                  key={item.id}
-                  style={[
-                    styles.planRow,
-                    selected && styles.planRowSelected,
-                  ]}
-                  onPress={() => togglePlanItem(item.id)}
-                  disabled={saving}
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: selected }}
-                  accessibilityLabel={`Plan item ${item.label}`}
-                >
-                  <View
-                    style={[
-                      styles.checkbox,
-                      selected && styles.checkboxSelected,
-                    ]}
-                  >
-                    {selected ? (
-                      <Text style={styles.checkboxMark}>✓</Text>
-                    ) : null}
-                  </View>
-                  <Text style={styles.planLabel} numberOfLines={2}>
-                    {item.label}
-                  </Text>
-                </Pressable>
-              );
-            })
-          )}
+              {planItems.length === 0 ? (
+                <Text style={styles.emptyPlanItems}>
+                  No plan items available on this project yet.
+                </Text>
+              ) : (
+                planItems.map((item) => {
+                  const selected = selectedSet.has(item.id);
+                  return (
+                    <Pressable
+                      key={item.id}
+                      style={[
+                        styles.planRow,
+                        selected && styles.planRowSelected,
+                      ]}
+                      onPress={() => togglePlanItem(item.id)}
+                      disabled={saving}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: selected }}
+                      accessibilityLabel={`Plan item ${item.label}`}
+                    >
+                      <View
+                        style={[
+                          styles.checkbox,
+                          selected && styles.checkboxSelected,
+                        ]}
+                      >
+                        {selected ? (
+                          <Text style={styles.checkboxMark}>✓</Text>
+                        ) : null}
+                      </View>
+                      <Text style={styles.planLabel} numberOfLines={2}>
+                        {item.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })
+              )}
+            </>
+          ) : null}
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </ScrollView>
@@ -368,6 +452,31 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.text.secondary,
     marginBottom: 10,
+  },
+  imageSection: {
+    marginBottom: 8,
+  },
+  imageActionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+  },
+  imageActions: {
+    alignItems: "flex-start",
+    gap: 6,
+  },
+  imageActionButton: {
+    minHeight: 36,
+    justifyContent: "center",
+    paddingHorizontal: 10,
+  },
+  imageActionText: {
+    ...typography.button,
+    color: colors.brand.blue,
+  },
+  imageRemoveText: {
+    ...typography.button,
+    color: colors.text.secondary,
   },
   emptyPlanItems: {
     ...typography.caption,

@@ -186,7 +186,7 @@ const styles = StyleSheet.create({
   },
 
   tile: {
-    borderRadius: 15,
+    borderRadius: 0,
     overflow: "hidden",
     backgroundColor:
       "rgba(15,23,42,0.05)",

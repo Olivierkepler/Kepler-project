@@ -21,7 +21,9 @@
     "test:assessment": "tsx src/scripts/fieldVarianceAssessmentTest.ts",
     "test:evidence-analysis": "tsx src/scripts/evidenceAnalysisTest.ts",
     "test:fe3-recoverable-evidence": "tsx src/scripts/phase2FE3RecoverableEvidenceTest.ts",
-    "test:fe6-request-evidence": "tsx src/scripts/phase2FE6RequestEvidenceTest.ts"
+    "test:fe6-request-evidence": "tsx src/scripts/phase2FE6RequestEvidenceTest.ts",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "engines": {
     "node": ">=20"
@@ -31,7 +33,10 @@
     "express": "^5.2.1",
     "firebase-admin": "^14.3.0",
     "google-auth-library": "^10.1.0",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "expo": "~54.0.37",
+    "react": "19.1.0",
+    "react-native": "0.81.5"
   },
   "devDependencies": {
     "@types/connect": "^3.4.38",

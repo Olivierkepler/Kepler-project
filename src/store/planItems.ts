@@ -1,5 +1,7 @@
 import { planItems as seedPlanItems } from "../data/planItems";
-import type { PlanItem, PlanItemType } from "../types/plan";
+import type { PlanItem } from "../types/plan";
+import { copyLocalPlanItem, isPlanItem } from "../utils/domain/planItemRecord";
+export { isPlanItem } from "../utils/domain/planItemRecord";
 import {
   buildPlanItem,
   createLocalPlanItemId,
@@ -11,72 +13,10 @@ import {
   scopedOperationalKey,
 } from "./localDataScope";
 import { writeJsonArray } from "./storage";
-
-const PLAN_ITEM_TYPES: readonly PlanItemType[] = [
-  "length",
-  "area",
-  "count",
-  "volume",
-];
-
-function isPlanItemType(value: unknown): value is PlanItemType {
-  return (
-    typeof value === "string" &&
-    (PLAN_ITEM_TYPES as readonly string[]).includes(value)
-  );
-}
-
-function isPlanItem(value: unknown): value is PlanItem {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-
-  const record = value as Record<string, unknown>;
-
-  const baseValid =
-    typeof record.id === "string" &&
-    record.id.trim().length > 0 &&
-    typeof record.projectId === "string" &&
-    record.projectId.trim().length > 0 &&
-    isPlanItemType(record.type) &&
-    typeof record.label === "string" &&
-    typeof record.plannedValue === "number" &&
-    typeof record.unit === "string" &&
-    typeof record.unitCost === "number" &&
-    typeof record.productionRatePerDay === "number" &&
-    typeof record.laborHoursPerUnit === "number";
-
-  if (!baseValid) {
-    return false;
-  }
-
-  if (
-    record.origin !== undefined &&
-    record.origin !== "manual" &&
-    record.origin !== "plan_import"
-  ) {
-    return false;
-  }
-
-  if (
-    record.planImportId !== undefined &&
-    typeof record.planImportId !== "string"
-  ) {
-    return false;
-  }
-
-  if (
-    record.planImportCandidateId !== undefined &&
-    typeof record.planImportCandidateId !== "string"
-  ) {
-    return false;
-  }
-
-  return true;
-}
+import { applyPlanItemImageUriUpdate } from "../utils/domain/planItemImage";
 
 function copyPlanItem(item: PlanItem): PlanItem {
-  return { ...item };
+  return copyLocalPlanItem(item);
 }
 
 async function loadPlanItems(ownerUid: string): Promise<PlanItem[]> {
@@ -163,6 +103,7 @@ export async function addPlanItemsIfAbsent(
 export async function createPlanItem(
   ownerUid: string,
   input: PlanItemCreateInput,
+  options: { id?: string; imageUri?: string | null } = {},
 ): Promise<PlanItem> {
   if (!ownerUid.trim()) {
     throw new Error("Invalid plan item create.");
@@ -174,13 +115,16 @@ export async function createPlanItem(
     throw new Error(validated.error);
   }
 
-  const id = createLocalPlanItemId();
+  const id = options.id ?? createLocalPlanItemId();
 
-  if (id.includes("/")) {
+  if (!id.trim() || id.includes("/")) {
     throw new Error("Invalid plan item id.");
   }
 
   const item = buildPlanItem(id, validated.value);
+  if (options.imageUri !== undefined) {
+    item.imageUri = options.imageUri;
+  }
   const result = await addPlanItemsIfAbsent(ownerUid, [item]);
 
   if (result.added !== 1) {
@@ -196,9 +140,17 @@ export type PlanItemUpdate = {
   unitCost?: number;
   productionRatePerDay?: number;
   laborHoursPerUnit?: number;
+  imageUri?: string | null;
 };
 
 function isValidPlanItemUpdate(update: PlanItemUpdate): boolean {
+  if (
+    update.imageUri !== undefined &&
+    update.imageUri !== null &&
+    (typeof update.imageUri !== "string" || !update.imageUri.trim())
+  ) {
+    return false;
+  }
   if (update.label !== undefined) {
     if (typeof update.label !== "string" || update.label.trim().length === 0) {
       return false;
@@ -250,7 +202,8 @@ function isValidPlanItemUpdate(update: PlanItemUpdate): boolean {
     update.plannedValue !== undefined ||
     update.unitCost !== undefined ||
     update.productionRatePerDay !== undefined ||
-    update.laborHoursPerUnit !== undefined
+    update.laborHoursPerUnit !== undefined ||
+    update.imageUri !== undefined
   );
 }
 
@@ -291,10 +244,15 @@ export async function updatePlanItem(
     ...(update.laborHoursPerUnit !== undefined
       ? { laborHoursPerUnit: update.laborHoursPerUnit }
       : {}),
+    ...(update.imageUri !== undefined ? { imageUri: update.imageUri } : {}),
   };
+  const withImageUpdate =
+    update.imageUri !== undefined
+      ? applyPlanItemImageUriUpdate(nextItem, update.imageUri)
+      : nextItem;
 
   const next = [...items];
-  next[index] = copyPlanItem(nextItem);
+  next[index] = copyPlanItem(withImageUpdate);
   await writeJsonArray(scopedOperationalKey("planItems", ownerUid), next);
-  return copyPlanItem(nextItem);
+  return copyPlanItem(withImageUpdate);
 }

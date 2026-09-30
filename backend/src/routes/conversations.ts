@@ -1,6 +1,22 @@
 import { Router } from "express";
 
+import {
+  assertProjectOwnedByUser,
+  ProjectAccessError,
+} from "../auth/projectAccess.js";
+import {
+  getConversationById,
+} from "../repositories/conversationsRepository.js";
 import { getUserProfilesByUids } from "../repositories/userProfilesRepository.js";
+import { buildChatParticipantPresentations } from "../services/chat/chatParticipantPresentation.js";
+import {
+  assertProjectChatAvatarOwner,
+  commitProjectChatAvatar,
+  deleteProjectChatAvatar,
+  presentConversation,
+  ProjectChatAvatarError,
+  requestProjectChatAvatarUpload,
+} from "../services/chat/projectChatAvatarService.js";
 import {
   assertChatProjectAccess,
   assertConversationReadable,
@@ -20,6 +36,8 @@ import {
 import {
   parseCreateChatMessageBody,
   parseCreateDirectConversationBody,
+  parseProjectChatAvatarCommitBody,
+  parseProjectChatAvatarUploadUrlBody,
 } from "../validation/conversation.js";
 import {
   handleRouteError,
@@ -52,7 +70,34 @@ async function handleChatRouteError(
     sendError(res, 400, error.message);
     return;
   }
+  if (error instanceof ProjectChatAvatarError) {
+    sendError(res, error.statusCode, error.message);
+    return;
+  }
   await handleRouteError(res, error);
+}
+
+async function getOwnerProjectConversation(input: {
+  uid: string;
+  projectId: string;
+  conversationId: string;
+}) {
+  const project = await assertProjectOwnedByUser(input.projectId, input.uid);
+  const conversation = await getConversationById(input.conversationId);
+
+  if (!conversation) {
+    throw new ProjectAccessError("Conversation not found", 404);
+  }
+
+  assertProjectChatAvatarOwner({
+    uid: input.uid,
+    projectOwnerUid: project.ownerUid,
+    projectId: project.id,
+    conversationId: input.conversationId,
+    conversation,
+  });
+
+  return { project, conversation };
 }
 
 conversationsRouter.get(
@@ -79,20 +124,11 @@ conversationsRouter.get(
       const profiles = await getUserProfilesByUids(
         others.map((member) => member.userId),
       );
-      const profileByUserId = new Map(
-        profiles.map((profile) => [profile.uid, profile] as const),
-      );
 
       res.status(200).json(
-        others.map((member) => {
-          const profile = profileByUserId.get(member.userId);
-          return {
-            projectMemberId: member.id,
-            userId: member.userId,
-            role: member.role,
-            displayName: profile?.displayName?.trim() || null,
-            email: profile?.email?.trim() || null,
-          };
+        await buildChatParticipantPresentations({
+          members: others,
+          profiles,
         }),
       );
     } catch (error) {
@@ -121,7 +157,11 @@ conversationsRouter.get(
         projectId,
         uid,
       });
-      res.status(200).json(conversations);
+      res.status(200).json(
+        await Promise.all(
+          conversations.map((conversation) => presentConversation(conversation)),
+        ),
+      );
     } catch (error) {
       await handleChatRouteError(res, error);
     }
@@ -145,7 +185,9 @@ conversationsRouter.post(
       }
 
       const result = await ensureProjectConversation({ projectId, uid });
-      res.status(result.created ? 201 : 200).json(result.conversation);
+      res
+        .status(result.created ? 201 : 200)
+        .json(await presentConversation(result.conversation));
     } catch (error) {
       await handleChatRouteError(res, error);
     }
@@ -178,7 +220,9 @@ conversationsRouter.post(
         uid,
         otherProjectMemberId: parsed.otherProjectMemberId,
       });
-      res.status(result.created ? 201 : 200).json(result.conversation);
+      res
+        .status(result.created ? 201 : 200)
+        .json(await presentConversation(result.conversation));
     } catch (error) {
       await handleChatRouteError(res, error);
     }
@@ -230,19 +274,10 @@ conversationsRouter.get(
       const profiles = await getUserProfilesByUids(
         members.map((member) => member.userId),
       );
-      const profileByUserId = new Map(
-        profiles.map((profile) => [profile.uid, profile] as const),
-      );
 
-      const participants = members.map((member) => {
-        const profile = profileByUserId.get(member.userId);
-        return {
-          projectMemberId: member.id,
-          userId: member.userId,
-          role: member.role,
-          displayName: profile?.displayName?.trim() || null,
-          email: profile?.email?.trim() || null,
-        };
+      const participants = await buildChatParticipantPresentations({
+        members,
+        profiles,
       });
 
       const planItemIds = page.items
@@ -262,11 +297,132 @@ conversationsRouter.get(
       res.status(200).json({
         items: page.items,
         nextCursor: page.nextCursor,
-        conversation,
+        conversation: await presentConversation(conversation),
         currentProjectMemberId: page.access.membership.id,
         participants,
         referencePresentations,
       });
+    } catch (error) {
+      await handleChatRouteError(res, error);
+    }
+  },
+);
+
+conversationsRouter.post(
+  "/projects/:projectId/conversations/:conversationId/avatar/upload-url",
+  async (req, res) => {
+    try {
+      const uid = requireUserUid(req);
+      const projectId = req.params.projectId;
+      const conversationId = req.params.conversationId;
+      const parsed = parseProjectChatAvatarUploadUrlBody(readBody(req));
+
+      if (!uid) {
+        sendError(res, 401, "Unauthorized");
+        return;
+      }
+      if (!projectId || !conversationId) {
+        sendError(res, 400, "projectId and conversationId are required");
+        return;
+      }
+      if (!parsed) {
+        sendError(res, 400, "Invalid Project Chat avatar upload request");
+        return;
+      }
+
+      const { project, conversation } = await getOwnerProjectConversation({
+        uid,
+        projectId,
+        conversationId,
+      });
+      const signed = await requestProjectChatAvatarUpload({
+        uid,
+        projectOwnerUid: project.ownerUid,
+        projectId: project.id,
+        conversationId,
+        conversation,
+        contentType: parsed.contentType,
+      });
+      res.status(200).json(signed);
+    } catch (error) {
+      await handleChatRouteError(res, error);
+    }
+  },
+);
+
+conversationsRouter.post(
+  "/projects/:projectId/conversations/:conversationId/avatar/commit",
+  async (req, res) => {
+    try {
+      const uid = requireUserUid(req);
+      const projectId = req.params.projectId;
+      const conversationId = req.params.conversationId;
+      const parsed = parseProjectChatAvatarCommitBody(readBody(req));
+
+      if (!uid) {
+        sendError(res, 401, "Unauthorized");
+        return;
+      }
+      if (!projectId || !conversationId) {
+        sendError(res, 400, "projectId and conversationId are required");
+        return;
+      }
+      if (!parsed) {
+        sendError(res, 400, "Invalid Project Chat avatar commit request");
+        return;
+      }
+
+      const { project, conversation } = await getOwnerProjectConversation({
+        uid,
+        projectId,
+        conversationId,
+      });
+      const presented = await commitProjectChatAvatar({
+        uid,
+        projectOwnerUid: project.ownerUid,
+        projectId: project.id,
+        conversationId,
+        conversation,
+        objectId: parsed.objectId,
+        contentType: parsed.contentType,
+      });
+      res.status(200).json(presented);
+    } catch (error) {
+      await handleChatRouteError(res, error);
+    }
+  },
+);
+
+conversationsRouter.delete(
+  "/projects/:projectId/conversations/:conversationId/avatar",
+  async (req, res) => {
+    try {
+      const uid = requireUserUid(req);
+      const projectId = req.params.projectId;
+      const conversationId = req.params.conversationId;
+
+      if (!uid) {
+        sendError(res, 401, "Unauthorized");
+        return;
+      }
+      if (!projectId || !conversationId) {
+        sendError(res, 400, "projectId and conversationId are required");
+        return;
+      }
+
+      const { project, conversation } = await getOwnerProjectConversation({
+        uid,
+        projectId,
+        conversationId,
+      });
+      const presented = await deleteProjectChatAvatar({
+        uid,
+        projectOwnerUid: project.ownerUid,
+        projectId: project.id,
+        conversationId,
+        conversation,
+      });
+      res.status(200).json(presented);
     } catch (error) {
       await handleChatRouteError(res, error);
     }

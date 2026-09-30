@@ -16,8 +16,11 @@ import {
   getProjectsForOwner,
   setProject,
 } from "../repositories/projectsRepository.js";
+import { getUserProfilesByUids } from "../repositories/userProfilesRepository.js";
 import { assertProjectReadableByUser } from "../services/collaboration/projectReadAccess.js";
 import { projectInvitationCreatedActivity } from "../services/activity/projectActivityProjections.js";
+import { buildProjectMembersWithPresentation } from "../services/projectMemberPresentation.js";
+import { projectProgressService } from "../services/projectProgressService.js";
 import {
   handleRouteError,
   readBody,
@@ -25,6 +28,10 @@ import {
   sendError,
 } from "../validation/http.js";
 import { parseProjectInvitationCreateInput } from "../validation/projectInvitation.js";
+import {
+  parseProjectProgressBaselineInput,
+  parseProjectProgressSnapshotInput,
+} from "../validation/projectProgress.js";
 import { parseProjectUpdateInput, parseProjectWriteInput } from "../validation/project.js";
 
 export const projectsRouter = Router();
@@ -99,6 +106,10 @@ projectsRouter.post("/bootstrap", async (req, res) => {
 /**
  * Owner-only membership list (Phase 1F).
  * Membership alone does not authorize this endpoint — assertProjectOwnedByUser.
+ *
+ * Phase 2E-E: response remains the same ProjectMember array, enriched with
+ * optional presentation fields (displayName, email, avatarUrl) resolved from
+ * trusted userProfiles. Authorization and membership semantics are unchanged.
  */
 projectsRouter.get("/:projectId/members", async (req, res) => {
   try {
@@ -117,7 +128,14 @@ projectsRouter.get("/:projectId/members", async (req, res) => {
 
     await assertProjectOwnedByUser(projectId, uid);
     const members = await listProjectMembers(projectId);
-    res.status(200).json(members);
+    const profiles = await getUserProfilesByUids(
+      members.map((member) => member.userId),
+    );
+    const presented = await buildProjectMembersWithPresentation(
+      members,
+      profiles,
+    );
+    res.status(200).json(presented);
   } catch (error) {
     await handleRouteError(res, error);
   }
@@ -271,6 +289,92 @@ projectsRouter.patch("/:projectId", async (req, res) => {
 
     await setProject(project);
     res.status(200).json(project);
+  } catch (error) {
+    await handleRouteError(res, error);
+  }
+});
+
+/** Membership-aware read of the planned baseline and actual progress history. */
+projectsRouter.get("/:projectId/progress", async (req, res) => {
+  try {
+    const uid = requireUserUid(req);
+    const projectId = req.params.projectId;
+
+    if (!uid) {
+      sendError(res, 401, "Unauthorized");
+      return;
+    }
+    if (!projectId) {
+      sendError(res, 400, "projectId is required");
+      return;
+    }
+
+    const series = await projectProgressService.getSeries(projectId, uid);
+    res.status(200).json(series);
+  } catch (error) {
+    await handleRouteError(res, error);
+  }
+});
+
+/** Owner-only, date-keyed upsert for one planned baseline point. */
+projectsRouter.put("/:projectId/progress/baseline", async (req, res) => {
+  try {
+    const uid = requireUserUid(req);
+    const projectId = req.params.projectId;
+
+    if (!uid) {
+      sendError(res, 401, "Unauthorized");
+      return;
+    }
+    if (!projectId) {
+      sendError(res, 400, "projectId is required");
+      return;
+    }
+
+    const input = parseProjectProgressBaselineInput(readBody(req));
+    if (!input) {
+      sendError(res, 400, "Invalid project progress baseline point");
+      return;
+    }
+
+    const point = await projectProgressService.upsertBaseline(
+      projectId,
+      uid,
+      input,
+    );
+    res.status(200).json(point);
+  } catch (error) {
+    await handleRouteError(res, error);
+  }
+});
+
+/** Owner-only append of a manually recorded actual progress snapshot. */
+projectsRouter.post("/:projectId/progress/snapshots", async (req, res) => {
+  try {
+    const uid = requireUserUid(req);
+    const projectId = req.params.projectId;
+
+    if (!uid) {
+      sendError(res, 401, "Unauthorized");
+      return;
+    }
+    if (!projectId) {
+      sendError(res, 400, "projectId is required");
+      return;
+    }
+
+    const input = parseProjectProgressSnapshotInput(readBody(req));
+    if (!input) {
+      sendError(res, 400, "Invalid project progress snapshot");
+      return;
+    }
+
+    const snapshot = await projectProgressService.appendSnapshot(
+      projectId,
+      uid,
+      input,
+    );
+    res.status(201).json(snapshot);
   } catch (error) {
     await handleRouteError(res, error);
   }

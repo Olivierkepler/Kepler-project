@@ -55,7 +55,7 @@ import {
 } from "../../utils/domain/memberDisplay";
 
 import FeedAvatar from "../home/feed/FeedAvatar";
-import KeplerLogo from "../branding/KeplerLogo";
+import KeplerLogo from "../branding/KeplerLogo1";
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -581,13 +581,14 @@ const styles =
         "center",
 
       backgroundColor:
-        "rgba(255,255,255,0.88)",
+        // "rgba(255,255,255,0.88)",
+        "transparent",
 
-      borderWidth:
-        StyleSheet.hairlineWidth,
+      // borderWidth:
+      //   StyleSheet.hairlineWidth,
 
-      borderColor:
-        "rgba(1,33,105,0.06)",
+      // borderColor:
+      //   "rgba(1,33,105,0.06)",
     },
 
     profileButton: {
@@ -597,11 +598,12 @@ const styles =
       alignItems: "center",
       justifyContent: "center",
       backgroundColor:
-        "rgba(255,255,255,0.88)",
-      borderWidth:
-        StyleSheet.hairlineWidth,
-      borderColor:
-        "rgba(1,33,105,0.06)",
+        // "rgba(255,255,255,0.88)",
+        "transparent",
+      // borderWidth:
+      //   StyleSheet.hairlineWidth,
+      // borderColor:
+      //   "rgba(1,33,105,0.06)",
     },
 
     buttonPressed: {

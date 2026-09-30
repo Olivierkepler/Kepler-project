@@ -659,6 +659,8 @@ export type RemotePlanItemSummary = {
   origin?: "manual" | "plan_import";
   planImportId?: string;
   planImportCandidateId?: string;
+  /** Short-lived signed presentation URL. */
+  imageUrl?: string;
 };
 
 export type ApproveRemotePlanImportResponse = {
@@ -687,7 +689,8 @@ function isRemotePlanItemSummary(value: unknown): value is RemotePlanItemSummary
     typeof record.unit === "string" &&
     typeof record.unitCost === "number" &&
     typeof record.productionRatePerDay === "number" &&
-    typeof record.laborHoursPerUnit === "number"
+    typeof record.laborHoursPerUnit === "number" &&
+    (record.imageUrl === undefined || typeof record.imageUrl === "string")
   );
 }
 
@@ -740,6 +743,12 @@ export async function approveRemotePlanImport(
     ),
     createdCount: record.createdCount,
     alreadyApproved: record.alreadyApproved === true,
-    planItems: record.planItems,
+    planItems: record.planItems.map((item) => {
+      const { imageUrl, ...presentation } = item;
+      const normalizedImageUrl = imageUrl?.trim();
+      return normalizedImageUrl
+        ? { ...presentation, imageUrl: normalizedImageUrl }
+        : presentation;
+    }),
   };
 }

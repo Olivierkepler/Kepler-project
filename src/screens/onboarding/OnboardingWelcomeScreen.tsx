@@ -10,7 +10,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 
 import BuildSigmaAnimatedLogo from "../../components/branding/BuildSigmaAnimatedLogo";
-import type { OnboardingStackParamList } from "../../navigation/OnboardingNavigator";
+import type { OnboardingStackParamList } from "../../navigation/types";
 import { typography } from "../../theme/typography";
 import KeplerLogo from "../../components/branding/KeplerLogo";
 

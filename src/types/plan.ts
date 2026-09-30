@@ -18,6 +18,12 @@ export type PlanItem = {
   productionRatePerDay: number;
   laborHoursPerUnit: number;
 
+  /** Durable app-documents URI for an owner-local Plan Item image. */
+  imageUri?: string | null;
+
+  /** Short-lived API image URL for remote/shared presentation only. */
+  imageUrl?: string;
+
   /**
    * Provenance (Phase 2P.5 / 2P.6). Optional for backward compatibility.
    * Imported items set origin = "plan_import" with import/candidate ids.

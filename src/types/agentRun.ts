@@ -53,4 +53,11 @@ export type AgentRunSummary = {
   completedAt: string | null;
   lastEvidenceId: string | null;
   deltaContext: AgentRunDeltaContext;
+  /** Present when API indicates owner may reopen a failed unusable-evidence run. */
+  canRecoverEvidence?: boolean;
+  /**
+   * Present when API indicates owner may reopen sticky running/assess_variance
+   * after request_evidence fall-through.
+   */
+  canRecoverStickyRequestEvidence?: boolean;
 };

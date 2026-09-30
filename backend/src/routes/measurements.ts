@@ -27,6 +27,10 @@ import {
   projectMeasurementSubmittedActivity,
 } from "../services/activity/projectActivityProjections.js";
 import {
+  OwnerMeasurementReconcileError,
+  reconcileOwnerMeasurementToDelta,
+} from "../services/reconcileOwnerMeasurementToDelta.js";
+import {
   handleRouteError,
   readBody,
   requireUserUid,
@@ -364,6 +368,62 @@ measurementsRouter.get(
       );
       res.status(200).json(events);
     } catch (error) {
+      await handleRouteError(res, error);
+    }
+  },
+);
+
+/**
+ * Owner-only Plan-vs-Reality reconciliation (Phase 2F-C).
+ * Server calculates from canonical Measurement + PlanItem.
+ * Empty body; no client arithmetic.
+ */
+measurementsRouter.post(
+  "/projects/:projectId/measurements/:measurementId/reconcile",
+  async (req, res) => {
+    try {
+      const uid = requireUserUid(req);
+      const projectId = req.params.projectId;
+      const measurementId = req.params.measurementId;
+
+      if (!uid) {
+        sendError(res, 401, "Unauthorized");
+        return;
+      }
+
+      if (!projectId || !measurementId) {
+        sendError(res, 400, "projectId and measurementId are required");
+        return;
+      }
+
+      await assertProjectOwnedByUser(projectId, uid);
+
+      const result = await reconcileOwnerMeasurementToDelta({
+        projectId,
+        measurementId,
+        ownerUid: uid,
+      });
+
+      if (result.outcome === "no_delta") {
+        res.status(200).json({
+          outcome: "no_delta",
+          reason: "zero_difference",
+          measurementId: result.measurementId,
+          delta: null,
+        });
+        return;
+      }
+
+      res.status(200).json({
+        outcome: result.outcome,
+        measurementId: result.measurementId,
+        delta: result.delta,
+      });
+    } catch (error) {
+      if (error instanceof OwnerMeasurementReconcileError) {
+        sendError(res, error.statusCode, error.message, error.code);
+        return;
+      }
       await handleRouteError(res, error);
     }
   },

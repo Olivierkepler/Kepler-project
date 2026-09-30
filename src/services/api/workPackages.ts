@@ -30,6 +30,8 @@ export type RemoteWorkPackage = {
   status: WorkPackageStatus;
   /** Canonical cloud PlanItem document ids. */
   planItemIds: string[];
+  /** Short-lived signed presentation URL. */
+  imageUrl?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -114,6 +116,12 @@ export function parseRemoteWorkPackage(
     record.description.trim().length > 0
       ? record.description
       : undefined;
+  if (record.imageUrl !== undefined && typeof record.imageUrl !== "string") {
+    return null;
+  }
+  const imageUrl = typeof record.imageUrl === "string" && record.imageUrl.trim()
+    ? record.imageUrl.trim()
+    : undefined;
 
   return {
     id: record.id.trim(),
@@ -122,8 +130,33 @@ export function parseRemoteWorkPackage(
     ...(description !== undefined ? { description } : {}),
     status: record.status,
     planItemIds,
+    ...(imageUrl ? { imageUrl } : {}),
     createdAt: record.createdAt.trim(),
     updatedAt: record.updatedAt.trim(),
+  };
+}
+
+export type RemoteWorkPackageImageUpload = {
+  uploadUrl: string;
+  objectId: string;
+  contentType: string;
+  expiresAt: string;
+};
+
+function parseRemoteWorkPackageImageUpload(value: unknown): RemoteWorkPackageImageUpload | null {
+  if (typeof value !== "object" || value === null) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    !isNonEmptyString(record.uploadUrl) ||
+    !isNonEmptyString(record.objectId) ||
+    !isNonEmptyString(record.contentType) ||
+    !isNonEmptyString(record.expiresAt)
+  ) return null;
+  return {
+    uploadUrl: record.uploadUrl.trim(),
+    objectId: record.objectId.trim(),
+    contentType: record.contentType.trim().toLowerCase(),
+    expiresAt: record.expiresAt.trim(),
   };
 }
 
@@ -397,6 +430,99 @@ export async function updateRemoteWorkPackage(
     throw new Error("Unable to reach the authenticated API.");
   }
 
+  return parsed;
+}
+
+export async function requestRemoteWorkPackageImageUpload(input: {
+  remoteProjectId: string;
+  workPackageId: string;
+  contentType: string;
+}): Promise<RemoteWorkPackageImageUpload> {
+  const projectId = input.remoteProjectId.trim();
+  const id = input.workPackageId.trim();
+  if (!projectId || !id) throw new Error("Work package not found.");
+  let response: Response;
+  try {
+    response = await authenticatedFetch(
+      `/api/projects/${encodeURIComponent(projectId)}/work-packages/${encodeURIComponent(id)}/image/upload-url`,
+      { method: "POST", body: JSON.stringify({ contentType: input.contentType.trim() }) },
+    );
+  } catch (error) {
+    mapAuthFetchError(error);
+  }
+  const payload = await parseJson(response);
+  if (response.status === 401) throw new Error("Your session could not be authenticated.");
+  if (response.status === 400 || response.status === 404) {
+    throw new Error(isNonEmptyString((payload as Record<string, unknown> | null)?.error)
+      ? String((payload as Record<string, unknown>).error)
+      : "Unable to request Work Package image upload.");
+  }
+  if (!response.ok) throw new Error("Unable to reach the authenticated API.");
+  const parsed = parseRemoteWorkPackageImageUpload(payload);
+  if (!parsed) throw new Error("Invalid Work Package image upload response.");
+  return parsed;
+}
+
+export async function commitRemoteWorkPackageImage(input: {
+  remoteProjectId: string;
+  workPackageId: string;
+  objectId: string;
+  contentType: string;
+}): Promise<RemoteWorkPackage> {
+  const projectId = input.remoteProjectId.trim();
+  const id = input.workPackageId.trim();
+  if (!projectId || !id) throw new Error("Work package not found.");
+  let response: Response;
+  try {
+    response = await authenticatedFetch(
+      `/api/projects/${encodeURIComponent(projectId)}/work-packages/${encodeURIComponent(id)}/image/commit`,
+      {
+        method: "POST",
+        body: JSON.stringify({ objectId: input.objectId.trim(), contentType: input.contentType.trim() }),
+      },
+    );
+  } catch (error) {
+    mapAuthFetchError(error);
+  }
+  const payload = await parseJson(response);
+  if (response.status === 401) throw new Error("Your session could not be authenticated.");
+  if (response.status === 400 || response.status === 404) {
+    throw new Error(isNonEmptyString((payload as Record<string, unknown> | null)?.error)
+      ? String((payload as Record<string, unknown>).error)
+      : "Unable to save Work Package image.");
+  }
+  if (!response.ok) throw new Error("Unable to reach the authenticated API.");
+  const parsed = parseRemoteWorkPackage(payload);
+  if (!parsed) throw new Error("Invalid Work Package image response.");
+  return parsed;
+}
+
+export async function deleteRemoteWorkPackageImage(
+  remoteProjectId: string,
+  workPackageId: string,
+): Promise<RemoteWorkPackage> {
+  const projectId = remoteProjectId.trim();
+  const id = workPackageId.trim();
+  if (!projectId || !id) throw new Error("Work package not found.");
+  let response: Response;
+  try {
+    response = await authenticatedFetch(
+      `/api/projects/${encodeURIComponent(projectId)}/work-packages/${encodeURIComponent(id)}/image`,
+      { method: "DELETE" },
+    );
+  } catch (error) {
+    mapAuthFetchError(error);
+  }
+  const payload = await parseJson(response);
+  if (response.status === 401) throw new Error("Your session could not be authenticated.");
+  if (response.status === 400 || response.status === 404) {
+    throw new Error(isNonEmptyString((payload as Record<string, unknown> | null)?.error)
+      ? String((payload as Record<string, unknown>).error)
+      : "Unable to remove Work Package image.");
+  }
+  if (!response.ok) throw new Error("Unable to reach the authenticated API.");
+  const parsed = parseRemoteWorkPackage(payload);
+  if (!parsed) throw new Error("Invalid Work Package image response.");
   return parsed;
 }
 

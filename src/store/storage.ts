@@ -14,6 +14,7 @@ export const STORAGE_KEYS = {
   deltaUploadSyncState: "@buildsigma/deltaUploadSyncState",
   projectUpdateSyncState: "@buildsigma/projectUpdateSyncState",
   planItemUpdateSyncState: "@buildsigma/planItemUpdateSyncState",
+  planItemImageSyncState: "@buildsigma/planItemImageSyncState",
   evidence: "@buildsigma/evidence",
   evidenceCloudMappings: "@buildsigma/evidenceCloudMappings",
   evidenceUploadSyncState: "@buildsigma/evidenceUploadSyncState",

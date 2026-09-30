@@ -1,5 +1,7 @@
 import React, { useCallback, useState } from "react";
 import {
+  ActivityIndicator,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,16 +15,9 @@ import NetInfo from "@react-native-community/netinfo";
 import Ionicons from "@expo/vector-icons/Ionicons";
 
 import { useAuth } from "../auth/AuthProvider";
-import SharePlanItemSheet, {
-  type SharePlanItemDestination,
-} from "../components/chat/SharePlanItemSheet";
 import PlanItemProvenanceSheet from "../components/plan/PlanItemProvenanceSheet";
 import OrganizeWorkModal from "../components/project/OrganizeWorkModal";
 import type { RootStackParamList } from "../navigation/types";
-import {
-  ensureDirectConversation,
-  ensureProjectConversation,
-} from "../services/api/conversations";
 import {
   getRemotePlanItemProvenance,
   type PlanItemProvenance,
@@ -33,7 +28,6 @@ import {
 import { getRemoteProjectMembers } from "../services/api/projects";
 import { getRemoteWorkPackageAssignmentsForProject } from "../services/api/workPackageAssignments";
 import { getRemoteWorkPackagesForProject } from "../services/api/workPackages";
-import { ensureRemotePlanItem } from "../services/sync/planItemBootstrap";
 import { getAgentRunsForProject } from "../services/api/agentRuns";
 import { getDeltasForProject } from "../store/deltas";
 import { getEvidenceForProject } from "../store/evidence";
@@ -68,8 +62,14 @@ import {
 import { fetchMemberPresentationContext } from "../utils/domain/memberPresentationContext";
 import type { MemberPresentationContext } from "../utils/domain/memberDisplay";
 import { formatProvenanceDate } from "../utils/planItemProvenance";
+import { getPlanItemImageDisplaySource } from "../utils/domain/planItemImage";
 
-import { colors, typography } from "../theme/colors";
+import { typography } from "../theme/colors";
+import BuildSigmaFoldBackground from "../components/background/BuildSigmaFoldBackground";
+
+const KEPLER_NAVY = "#012169";
+const KEPLER_RED = "#E31837";
+
 type Props = NativeStackScreenProps<RootStackParamList, "PlanItemDetail">;
 
 function mergeLocalAndCloudMembers(
@@ -155,23 +155,49 @@ function formatDateTime(value: string): string {
   return date.toLocaleString(undefined, {
     month: "short",
     day: "numeric",
-    year: "numeric",
     hour: "numeric",
     minute: "2-digit",
   });
 }
 
+type SectionVariant = "core" | "supporting" | "intelligence";
+
 function Section({
   title,
   children,
+  variant = "core",
+  accent,
 }: {
   title: string;
   children: React.ReactNode;
+  variant?: SectionVariant;
+  accent?: "variance";
 }) {
+  const sectionStyle =
+    variant === "supporting"
+      ? styles.sectionSupporting
+      : variant === "intelligence"
+        ? styles.sectionIntelligence
+        : styles.section;
+
+  const titleStyle =
+    variant === "intelligence"
+      ? styles.sectionTitleIntelligence
+      : styles.sectionTitle;
+
+  const cardStyle = [
+    variant === "supporting"
+      ? styles.sectionCardSupporting
+      : variant === "intelligence"
+        ? styles.sectionCardIntelligence
+        : styles.sectionCard,
+    accent === "variance" ? styles.sectionCardVarianceAccent : null,
+  ];
+
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      <View style={styles.sectionCard}>{children}</View>
+    <View style={sectionStyle}>
+      <Text style={titleStyle}>{title}</Text>
+      <View style={cardStyle}>{children}</View>
     </View>
   );
 }
@@ -180,15 +206,71 @@ function MetaRow({
   label,
   value,
   last = false,
+  valueStyle,
+  leadingIcon,
 }: {
   label: string;
   value: string;
   last?: boolean;
+  valueStyle?: object;
+  leadingIcon?: React.ComponentProps<typeof Ionicons>["name"];
 }) {
   return (
     <View style={last ? styles.metaRowLast : styles.metaRow}>
-      <Text style={styles.metaLabel}>{label}</Text>
-      <Text style={styles.metaValue}>{value}</Text>
+      <View style={styles.metaLabelWrap}>
+        {leadingIcon ? (
+          <Ionicons
+            name={leadingIcon}
+            size={14}
+            color="#667085"
+            style={styles.metaLabelIcon}
+          />
+        ) : null}
+        <Text style={styles.metaLabel}>{label}</Text>
+      </View>
+      <Text style={[styles.metaValue, valueStyle]}>{value}</Text>
+    </View>
+  );
+}
+
+function PlanItemHeroImage({
+  item,
+}: {
+  item: Pick<PlanItem, "imageUri" | "imageUrl">;
+}) {
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const source = getPlanItemImageDisplaySource(item, failedUri);
+  if (!source) return null;
+
+  return (
+    <Image
+      source={{ uri: source.uri }}
+      style={styles.heroImage}
+      resizeMode="cover"
+      onError={() => setFailedUri(source.uri)}
+      accessibilityLabel="Plan Item image"
+    />
+  );
+}
+
+function StatusGroup({
+  title,
+  icon,
+  last = false,
+  children,
+}: {
+  title: string;
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+  last?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={last ? styles.statusGroupLast : styles.statusGroup}>
+      <View style={styles.statusGroupHeading}>
+        <Ionicons name={icon} size={15} color="#667085" />
+        <Text style={styles.statusGroupTitle}>{title}</Text>
+      </View>
+      <View>{children}</View>
     </View>
   );
 }
@@ -200,11 +282,7 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
 
   const [project, setProject] = useState<Project | null | undefined>(undefined);
   const [planItem, setPlanItem] = useState<PlanItem | null>(null);
-  const [shareSheetVisible, setShareSheetVisible] = useState(false);
   const [remoteProjectId, setRemoteProjectId] = useState<string | null>(null);
-  const [remotePlanItemId, setRemotePlanItemId] = useState<string | null>(null);
-  const [shareError, setShareError] = useState<string | null>(null);
-  const [sharing, setSharing] = useState(false);
   const [allPlanItems, setAllPlanItems] = useState<PlanItem[]>([]);
   const [latestMeasurement, setLatestMeasurement] =
     useState<Measurement | null>(null);
@@ -255,7 +333,6 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
               setProject(snapshot.project);
               setPlanItem(null);
               setRemoteProjectId(projectId);
-              setRemotePlanItemId(null);
               setLatestMeasurement(null);
               setLatestDelta(null);
               setRelatedEvidence([]);
@@ -304,7 +381,6 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
             setProject(snapshot.project);
             setPlanItem(foundPlanItem);
             setRemoteProjectId(projectId);
-            setRemotePlanItemId(planItemId);
             setAllPlanItems(snapshot.planItems);
             setWorkPackages(packageItems);
             setAssignments(assignmentItems);
@@ -403,7 +479,6 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
           (await getRemotePlanItemId(ownerUid, projectId, planItemId)) ?? null;
         if (active) {
           setRemoteProjectId(mappedRemoteProjectId ?? null);
-          setRemotePlanItemId(mappedRemotePlanItemId);
         }
 
         let mergedMembers = memberItems;
@@ -587,88 +662,52 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
   }, [projectId, user?.uid]);
 
 
-  const handleShareDestination = async (destination: SharePlanItemDestination) => {
-    if (!user?.uid || !planItem || sharing) {
-      return;
-    }
-    setSharing(true);
-    setShareError(null);
-    try {
-      let resolvedRemoteProjectId = remoteProjectId;
-      let resolvedRemotePlanItemId = remotePlanItemId;
-
-      if (!isShared) {
-        resolvedRemotePlanItemId =
-          (await ensureRemotePlanItem(user.uid, projectId, planItem.id)) ?? null;
-        resolvedRemoteProjectId =
-          (await getRemoteProjectId(user.uid, projectId)) ?? null;
-        setRemoteProjectId(resolvedRemoteProjectId);
-        setRemotePlanItemId(resolvedRemotePlanItemId);
-      }
-
-      if (!resolvedRemoteProjectId || !resolvedRemotePlanItemId) {
-        setShareError(
-          "Cloud sync is required before this Plan Item can be shared in chat.",
-        );
-        return;
-      }
-
-      const conversation =
-        destination.kind === "project_chat"
-          ? await ensureProjectConversation(resolvedRemoteProjectId)
-          : await ensureDirectConversation(
-              resolvedRemoteProjectId,
-              destination.projectMemberId,
-            );
-
-      setShareSheetVisible(false);
-      navigation.navigate("ProjectChat", {
-        remoteProjectId: resolvedRemoteProjectId,
-        conversationId: conversation.id,
-        titleHint:
-          destination.kind === "project_chat"
-            ? project?.name
-            : destination.titleHint,
-        subtitleHint:
-          destination.kind === "project_chat"
-            ? "Project Chat"
-            : destination.subtitleHint,
-        pendingPlanItemId: resolvedRemotePlanItemId,
-        pendingPlanItemLabel: planItem.label,
-        pendingDraftText: "Please verify this item.",
-      });
-    } catch (err) {
-      setShareError(
-        err instanceof Error ? err.message : "Unable to share Plan Item.",
-      );
-    } finally {
-      setSharing(false);
-    }
-  };
-
   if (project === undefined) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={["top"]}>
-        <View style={styles.container} />
-      </SafeAreaView>
+      <BuildSigmaFoldBackground intensity={0.55}>
+        <SafeAreaView style={styles.safeArea} edges={["top"]}>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator color={KEPLER_NAVY} />
+            <Text style={styles.loadingText}>Loading plan item…</Text>
+          </View>
+        </SafeAreaView>
+      </BuildSigmaFoldBackground>
     );
   }
 
   if (!project || !planItem) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={["top"]}>
-        <View style={styles.container}>
-          <Pressable
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <Text style={styles.backButtonText}>←</Text>
-          </Pressable>
-          <Text style={styles.title}>Plan item not found.</Text>
-        </View>
-      </SafeAreaView>
+      <BuildSigmaFoldBackground intensity={0.55}>
+        <SafeAreaView style={styles.safeArea} edges={["top"]}>
+          <View style={styles.container}>
+            <View style={styles.topBar}>
+              <Pressable
+                style={styles.backButton}
+                onPress={() => navigation.goBack()}
+                accessibilityRole="button"
+                accessibilityLabel="Go back"
+                hitSlop={8}
+              >
+                <Ionicons
+                  name="chevron-back"
+                  size={24}
+                  color={KEPLER_NAVY}
+                />
+              </Pressable>
+              <View style={styles.topBarPlaceholder} />
+              <View style={styles.topBarPlaceholder} />
+            </View>
+            <View style={styles.notFoundBody}>
+              <Ionicons
+                name="document-outline"
+                size={32}
+                color="#667085"
+              />
+              <Text style={styles.notFoundTitle}>Plan item not found.</Text>
+            </View>
+          </View>
+        </SafeAreaView>
+      </BuildSigmaFoldBackground>
     );
   }
 
@@ -689,7 +728,8 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
   const hasAssignment = assignmentMeta?.hasActiveAssignment ?? false;
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top"]}>
+    <BuildSigmaFoldBackground intensity={0.55}>
+      <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
@@ -701,50 +741,90 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
           onPress={() => navigation.goBack()}
           accessibilityRole="button"
           accessibilityLabel="Go back"
+          hitSlop={8}
         >
-          <Text style={styles.backButtonText}>←</Text>
+          <Ionicons
+            name="chevron-back"
+            size={24}
+            color={KEPLER_NAVY}
+          />
         </Pressable>
         <Text style={styles.topBarTitle}>Plan Item</Text>
         <View style={styles.topBarPlaceholder} />
       </View>
 
       {isShared ? (
-        <Text style={styles.sharedBanner}>Shared project · Read only</Text>
+        <View style={styles.sharedBanner}>
+          <Ionicons
+            name="lock-closed-outline"
+            size={13}
+            color={KEPLER_NAVY}
+          />
+          <Text style={styles.sharedBannerText}>
+            Shared project · Read only
+          </Text>
+        </View>
       ) : null}
-        <Text style={styles.eyebrow}>{project.name}</Text>
-        <Text style={styles.title}>{planItem.label}</Text>
-        <Text style={styles.typeBadge}>
-          {formatPlanItemTypeLabel(planItem.type)}
-        </Text>
+
+        <View style={styles.hero}>
+          <PlanItemHeroImage item={planItem} />
+          <View style={styles.heroCopy}>
+            <Text style={styles.heroEyebrow}>PLAN ITEM</Text>
+            <Text style={styles.projectName}>{project.name}</Text>
+            <Text style={styles.title}>{planItem.label}</Text>
+            <View style={styles.typeBadgePill}>
+              <Text style={styles.typeBadgeText}>
+                {formatPlanItemTypeLabel(planItem.type)}
+              </Text>
+            </View>
+          </View>
+        </View>
 
         <Section title="PLAN">
-          <MetaRow
-            label="Planned quantity"
-            value={formatQuantity(planItem.plannedValue, planItem.unit)}
-          />
-          <MetaRow label="Unit" value={planItem.unit} />
-          <MetaRow
-            label="Unit cost"
-            value={formatCurrency(planItem.unitCost)}
-          />
-          <MetaRow
-            label="Production rate / day"
-            value={`${planItem.productionRatePerDay}`}
-          />
-          <MetaRow
-            label="Labor hours / unit"
-            value={`${planItem.laborHoursPerUnit}`}
-            last
-          />
+          <View style={styles.planSummary}>
+            <Text style={styles.planQuantityLabel}>PLANNED QUANTITY</Text>
+            <Text style={styles.planQuantityValue}>
+              {formatQuantity(planItem.plannedValue, planItem.unit)}
+            </Text>
+            <View style={styles.planMetricGrid}>
+              <View style={styles.planMetricCell}>
+                <Text style={styles.planMetricLabel}>Unit</Text>
+                <Text style={styles.planMetricValue}>{planItem.unit}</Text>
+              </View>
+              <View style={styles.planMetricCell}>
+                <Text style={styles.planMetricLabel}>Unit cost</Text>
+                <Text style={styles.planMetricValue}>
+                  {formatCurrency(planItem.unitCost)}
+                </Text>
+              </View>
+              <View style={styles.planMetricCell}>
+                <Text style={styles.planMetricLabel}>Production / day</Text>
+                <Text style={styles.planMetricValue}>
+                  {planItem.productionRatePerDay}
+                </Text>
+              </View>
+              <View style={styles.planMetricCell}>
+                <Text style={styles.planMetricLabel}>Labor / unit</Text>
+                <Text style={styles.planMetricValue}>
+                  {planItem.laborHoursPerUnit} hr
+                </Text>
+              </View>
+            </View>
+          </View>
         </Section>
 
-        <Section title="SOURCE">
+        <Section title="DETAILS" variant="supporting">
+          <View style={styles.detailsGroup}>
+            <View style={styles.detailGroupHeading}>
+              <Ionicons name="document-text-outline" size={15} color="#667085" />
+              <Text style={styles.detailGroupLabel}>SOURCE</Text>
+            </View>
           {planItem.origin === "plan_import" ? (
-            <Text style={styles.emptyText}>
+            <Text style={styles.supportingBody}>
               Imported from project documents
             </Text>
           ) : (
-            <Text style={styles.emptyText}>Created manually</Text>
+            <Text style={styles.supportingBody}>Created manually</Text>
           )}
           {!isShared ? (
             <Pressable
@@ -752,17 +832,30 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
               onPress={openProvenance}
               accessibilityRole="button"
               accessibilityLabel={`View source for ${planItem.label}`}
+              hitSlop={6}
             >
-              <Text style={styles.linkButtonText}>
-                {planItem.origin === "plan_import"
-                  ? "View provenance →"
-                  : "View source →"}
-              </Text>
+              <View style={styles.linkRow}>
+                <Ionicons
+                  name="document-text-outline"
+                  size={16}
+                  color={KEPLER_NAVY}
+                />
+                <Text style={styles.linkButtonText}>
+                  {planItem.origin === "plan_import"
+                    ? "View provenance →"
+                    : "View source →"}
+                </Text>
+              </View>
             </Pressable>
           ) : null}
-        </Section>
+          </View>
 
-        <Section title="ASSIGNMENT">
+          <View style={styles.detailsDivider} />
+          <View style={styles.detailsGroup}>
+            <View style={styles.detailGroupHeading}>
+              <Ionicons name="briefcase-outline" size={15} color="#667085" />
+              <Text style={styles.detailGroupLabel}>ASSIGNMENT</Text>
+            </View>
           {hasAssignment && assignmentMeta ? (
             <>
               <MetaRow
@@ -772,6 +865,8 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
               <MetaRow
                 label="Assigned to"
                 value={assignmentMeta.assigneeLabel ?? "Unassigned"}
+                leadingIcon="person-outline"
+                valueStyle={styles.metaValueEmphasized}
               />
               <MetaRow
                 label="Assignment status"
@@ -790,6 +885,7 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
                   onPress={() => setOrganizeOpen(true)}
                   accessibilityRole="button"
                   accessibilityLabel="Change assignment"
+                  hitSlop={6}
                 >
                   <Text style={styles.linkButtonText}>Change assignment</Text>
                 </Pressable>
@@ -800,6 +896,7 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
               <MetaRow
                 label="Work package"
                 value={assignmentMeta.workPackageName}
+                last
               />
               <Text style={styles.emptyText}>
                 No member assigned to this work package yet.
@@ -810,6 +907,7 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
                   onPress={() => setOrganizeOpen(true)}
                   accessibilityRole="button"
                   accessibilityLabel="Change assignment"
+                  hitSlop={6}
                 >
                   <Text style={styles.linkButtonText}>Change assignment</Text>
                 </Pressable>
@@ -824,15 +922,18 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
                   onPress={() => setOrganizeOpen(true)}
                   accessibilityRole="button"
                   accessibilityLabel="Organize work"
+                  hitSlop={6}
                 >
                   <Text style={styles.linkButtonText}>Organize work</Text>
                 </Pressable>
               ) : null}
             </>
           )}
+          </View>
         </Section>
 
-        <Section title="FIELD">
+        <Section title="FIELD STATUS" variant="supporting">
+          <StatusGroup title="FIELD" icon="resize-outline">
           {latestMeasurement ? (
             <>
               <MetaRow
@@ -841,6 +942,7 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
                   latestMeasurement.value,
                   latestMeasurement.unit,
                 )}
+                valueStyle={styles.metaValueFocus}
               />
               <MetaRow
                 label="Recorded"
@@ -857,17 +959,27 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
                   }
                   accessibilityRole="button"
                   accessibilityLabel="Open measurement detail"
+                  hitSlop={6}
                 >
                   <Text style={styles.linkButtonText}>View measurement →</Text>
                 </Pressable>
               ) : null}
             </>
           ) : (
-            <Text style={styles.emptyText}>No field measurement yet</Text>
+            <View style={styles.emptyStateRow}>
+              <Ionicons
+                name="resize-outline"
+                size={18}
+                color="#667085"
+              />
+              <Text style={styles.emptyStateText}>
+                No field measurement yet
+              </Text>
+            </View>
           )}
-        </Section>
+          </StatusGroup>
 
-        <Section title="VARIANCE">
+          <StatusGroup title="VARIANCE" icon="git-compare-outline">
           {latestDelta ? (
             <>
               <MetaRow
@@ -876,14 +988,21 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
                   latestDelta.difference,
                   latestDelta.unit,
                 )}
+                valueStyle={styles.varianceValue}
               />
               <MetaRow
                 label="Status"
                 value={latestDelta.status.toUpperCase()}
+                valueStyle={
+                  latestDelta.status === "open"
+                    ? styles.varianceValue
+                    : undefined
+                }
               />
               <MetaRow
                 label="Recorded"
                 value={formatDateTime(latestDelta.createdAt)}
+                last
               />
               <Pressable
                 style={styles.linkButton}
@@ -894,26 +1013,41 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
                 }
                 accessibilityRole="button"
                 accessibilityLabel="Open delta detail"
+                hitSlop={6}
               >
                 <Text style={styles.linkButtonText}>View delta →</Text>
               </Pressable>
             </>
           ) : (
-            <Text style={styles.emptyText}>No delta recorded</Text>
+            <Text style={styles.emptyTextCalm}>No delta recorded</Text>
           )}
-        </Section>
+          </StatusGroup>
 
-        <Section title="EVIDENCE">
+          <StatusGroup title="EVIDENCE" icon="image-outline">
           {relatedEvidence.length === 0 ? (
-            <Text style={styles.emptyText}>
-              No related evidence linked through measurement or delta.
-            </Text>
+            <View style={styles.emptyStateRow}>
+              <Ionicons
+                name="image-outline"
+                size={18}
+                color="#667085"
+              />
+              <Text style={styles.emptyStateText}>
+                No related evidence linked through measurement or delta.
+              </Text>
+            </View>
           ) : (
             <>
-              <Text style={styles.emptyText}>
-                {relatedEvidence.length} related evidence record
-                {relatedEvidence.length === 1 ? "" : "s"}
-              </Text>
+              <View style={styles.evidenceSummaryRow}>
+                <Ionicons
+                  name="document-attach-outline"
+                  size={16}
+                  color="#475467"
+                />
+                <Text style={styles.supportingBody}>
+                  {relatedEvidence.length} related evidence record
+                  {relatedEvidence.length === 1 ? "" : "s"}
+                </Text>
+              </View>
               <Pressable
                 style={styles.linkButton}
                 onPress={() =>
@@ -921,6 +1055,7 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
                 }
                 accessibilityRole="button"
                 accessibilityLabel="Open project evidence"
+                hitSlop={6}
               >
                 <Text style={styles.linkButtonText}>
                   View project evidence →
@@ -928,9 +1063,13 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
               </Pressable>
             </>
           )}
-        </Section>
+          </StatusGroup>
 
-        <Section title="AGENT">
+          <StatusGroup
+            title="KEPLER AGENT"
+            icon="sparkles-outline"
+            last
+          >
           {latestAgentRun && agentPresentation ? (
             <>
               <MetaRow label="Status" value={agentPresentation.badge} />
@@ -981,6 +1120,7 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
                   }
                   accessibilityRole="button"
                   accessibilityLabel="Open agent run detail"
+                  hitSlop={6}
                 >
                   <Text style={styles.linkButtonText}>View agent run →</Text>
                 </Pressable>
@@ -996,6 +1136,7 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
                   }
                   accessibilityRole="button"
                   accessibilityLabel="Open agent summary"
+                  hitSlop={6}
                 >
                   <Text style={styles.linkButtonText}>
                     View agent summary →
@@ -1008,6 +1149,7 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
               {agentNote ?? "No related agent activity for this plan item."}
             </Text>
           )}
+          </StatusGroup>
         </Section>
 
         <Text style={styles.actionsTitle}>ACTIONS</Text>
@@ -1029,47 +1171,21 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
             </Text>
           </Pressable>
         ) : !isShared ? (
-          <View style={styles.disabledActionCard}>
-            <Text style={styles.disabledActionTitle}>
-              Measurement not available for this item type
-            </Text>
-            <Text style={styles.disabledActionBody}>
-              Field measurement currently supports length plan items in feet.
-            </Text>
+          <View style={styles.disabledActionRow}>
+            <Ionicons
+              name="information-circle-outline"
+              size={18}
+              color="#667085"
+            />
+            <View style={styles.disabledActionCopy}>
+              <Text style={styles.disabledActionTitle}>
+                Measurement unavailable for this item type
+              </Text>
+              <Text style={styles.disabledActionBody}>
+                Field measurement currently supports length plan items in feet.
+              </Text>
+            </View>
           </View>
-        ) : null}
-
-        <Pressable
-          style={[styles.secondaryButton, styles.shareButton]}
-          onPress={() => {
-            setShareError(null);
-            setShareSheetVisible(true);
-          }}
-          accessibilityRole="button"
-          accessibilityLabel="Share plan item"
-        >
-          <Ionicons name="share-outline" size={18} color={colors.brand.navy} />
-          <Text style={styles.shareButtonText}>Share</Text>
-        </Pressable>
-
-        {shareError ? (
-          <Text style={styles.shareErrorText}>{shareError}</Text>
-        ) : null}
-
-        {!isShared ? (
-        <Pressable
-          style={styles.secondaryButton}
-          onPress={() =>
-            navigation.navigate("EditPlanItem", {
-              projectId,
-              planItemId: planItem.id,
-            })
-          }
-          accessibilityRole="button"
-          accessibilityLabel="Edit plan item"
-        >
-          <Text style={styles.secondaryButtonText}>Edit plan item</Text>
-        </Pressable>
         ) : null}
       </ScrollView>
 
@@ -1082,17 +1198,6 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
         onClose={() => setProvenanceSheetVisible(false)}
         onRetry={() => {
           void loadProvenance();
-        }}
-      />
-
-      <SharePlanItemSheet
-        visible={shareSheetVisible}
-        remoteProjectId={remoteProjectId}
-        projectName={project.name}
-        planItemLabel={planItem.label}
-        onClose={() => setShareSheetVisible(false)}
-        onSelect={(destination) => {
-          void handleShareDestination(destination);
         }}
       />
 
@@ -1111,157 +1216,464 @@ export default function PlanItemDetailScreen({ route, navigation }: Props) {
           }}
         />
       ) : null}
-    </SafeAreaView>
+      </SafeAreaView>
+    </BuildSigmaFoldBackground>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#0B1017",
+    backgroundColor: "transparent",
   },
   container: {
     flex: 1,
-    backgroundColor: "#0B1017",
+    backgroundColor: "transparent",
   },
   content: {
     paddingHorizontal: 20,
     paddingBottom: 50,
   },
+  loadingContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    gap: 12,
+  },
+  loadingText: {
+    ...typography.caption,
+    color: "#667085",
+    fontSize: 13,
+  },
   topBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingTop: 16,
-    marginBottom: 18,
-  },
-  backButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
-    backgroundColor: "#151C25",
-    borderWidth: 1,
-    borderColor: "#27313D",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  backButtonText: {
-    ...typography.bodyMedium,
-    color: "#FFFFFF",
-  },
-  topBarTitle: {
-    ...typography.bodyLarge,
-    color: "#FFFFFF",
-  },
-  sharedBanner: {
-    ...typography.caption,
-    color: "#98A2B3",
+    paddingTop: 4,
     marginBottom: 10,
   },
+  backButton: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: -6,
+  },
+  topBarTitle: {
+    ...typography.bodyMedium,
+    color: "#101828",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  sharedBanner: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 12,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: "rgba(1,33,105,0.06)",
+  },
+  sharedBannerText: {
+    ...typography.caption,
+    color: KEPLER_NAVY,
+    fontSize: 12,
+    fontWeight: "500",
+  },
   topBarPlaceholder: {
-    width: 42,
+    width: 44,
+  },
+  notFoundBody: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingBottom: 80,
+    gap: 12,
+  },
+  notFoundTitle: {
+    ...typography.body,
+    color: "#475467",
+    fontSize: 15,
+    textAlign: "center",
+  },
+  hero: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 3,
+  },
+  heroImage: {
+    width: 72,
+    height: 72,
+    borderRadius: 14,
+    backgroundColor: "rgba(1,33,105,0.06)",
+  },
+  heroCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  heroEyebrow: {
+    ...typography.caption,
+    color: KEPLER_NAVY,
+    fontSize: 10.5,
+    letterSpacing: 0.75,
+    fontWeight: "600",
+  },
+  projectName: {
+    ...typography.caption,
+    color: "#667085",
+    fontSize: 12.5,
+    marginTop: 2,
   },
   eyebrow: {
-    ...typography.button,
-    color: "#8F9BA8",
+    ...typography.caption,
+    color: KEPLER_NAVY,
+    fontSize: 11,
+    letterSpacing: 0.7,
+    fontWeight: "600",
+    textTransform: "uppercase",
   },
   title: {
-    ...typography.display,
-    color: "#FFFFFF",
-    marginTop: 8,
+    ...typography.title,
+    color: "#101828",
+    fontSize: 25,
+    lineHeight: 31,
+    marginTop: 6,
+    letterSpacing: -0.35,
   },
-  typeBadge: {
+  typeBadgePill: {
+    alignSelf: "flex-start",
+    marginTop: 7,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(1,33,105,0.07)",
+  },
+  typeBadgeText: {
     ...typography.caption,
-    marginTop: 10,
-    color: "#F4A623",
+    color: KEPLER_NAVY,
+    fontSize: 11.5,
+    fontWeight: "600",
+  },
+  planSummary: {
+    paddingTop: 10,
+    paddingBottom: 4,
+  },
+  planQuantityLabel: {
+    ...typography.caption,
+    color: "#667085",
+    fontSize: 10.5,
+    letterSpacing: 0.6,
+    fontWeight: "600",
+  },
+  planQuantityValue: {
+    ...typography.title,
+    color: KEPLER_NAVY,
+    fontSize: 27,
+    lineHeight: 34,
+    fontWeight: "600",
+    marginTop: 2,
+    marginBottom: 8,
+  },
+  planMetricGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(15,23,42,0.08)",
+  },
+  planMetricCell: {
+    width: "50%",
+    minWidth: 0,
+    paddingVertical: 8,
+    paddingRight: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(15,23,42,0.06)",
+  },
+  planMetricLabel: {
+    ...typography.caption,
+    color: "#667085",
+    fontSize: 11.5,
+  },
+  planMetricValue: {
+    ...typography.bodyMedium,
+    color: "#101828",
+    fontSize: 13,
+    fontWeight: "600",
+    marginTop: 2,
   },
   section: {
-    marginTop: 26,
+    marginTop: 18,
+  },
+  sectionSupporting: {
+    marginTop: 15,
+  },
+  sectionIntelligence: {
+    marginTop: 16,
   },
   sectionTitle: {
     ...typography.caption,
-    color: "#8F9BA8",
-    marginBottom: 10,
+    color: "#475467",
+    fontSize: 11,
+    letterSpacing: 0.75,
+    fontWeight: "600",
+    marginBottom: 7,
+  },
+  sectionTitleIntelligence: {
+    ...typography.caption,
+    color: KEPLER_NAVY,
+    fontSize: 11,
+    letterSpacing: 0.75,
+    fontWeight: "600",
+    marginBottom: 7,
   },
   sectionCard: {
-    backgroundColor: "#151C25",
-    borderWidth: 1,
-    borderColor: "#27313D",
+    backgroundColor: "rgba(255,255,255,0.86)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(15,23,42,0.07)",
     borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 10,
+    paddingHorizontal: 12,
+    paddingTop: 2,
+    paddingBottom: 2,
+    overflow: "hidden",
+  },
+  sectionCardSupporting: {
+    backgroundColor: "rgba(255,255,255,0.55)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(15,23,42,0.05)",
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 6,
+    overflow: "hidden",
+  },
+  sectionCardIntelligence: {
+    backgroundColor: "rgba(1,33,105,0.04)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(1,33,105,0.10)",
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingTop: 2,
+    paddingBottom: 4,
+    overflow: "hidden",
+  },
+  sectionCardVarianceAccent: {
+    borderLeftWidth: 2.5,
+    borderLeftColor: KEPLER_RED,
+  },
+  detailsGroup: {
+    paddingVertical: 3,
+  },
+  detailGroupHeading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    marginBottom: 4,
+  },
+  detailGroupLabel: {
+    ...typography.caption,
+    color: "#667085",
+    fontSize: 10.5,
+    letterSpacing: 0.65,
+    fontWeight: "600",
+  },
+  detailsDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "rgba(15,23,42,0.08)",
+    marginVertical: 5,
+  },
+  statusGroup: {
+    paddingTop: 8,
+    paddingBottom: 7,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(15,23,42,0.07)",
+  },
+  statusGroupLast: {
+    paddingTop: 8,
+    paddingBottom: 7,
+  },
+  statusGroupHeading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    marginBottom: 2,
+  },
+  statusGroupTitle: {
+    ...typography.caption,
+    color: "#475467",
+    fontSize: 10.5,
+    letterSpacing: 0.55,
+    fontWeight: "600",
   },
   metaRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 12,
+    minHeight: 38,
+    paddingVertical: 8,
     gap: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(15,23,42,0.07)",
   },
   metaRowLast: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 6,
+    minHeight: 38,
+    paddingVertical: 8,
     gap: 12,
+  },
+  metaLabelWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: "48%",
+  },
+  metaLabelIcon: {
+    marginRight: 5,
   },
   metaLabel: {
     ...typography.caption,
-    color: "#788493",
+    color: "#667085",
+    fontSize: 12.5,
+    fontWeight: "500",
+    flexShrink: 1,
+    minWidth: 0,
   },
   metaValue: {
     ...typography.bodyMedium,
-    color: "#FFFFFF",
+    color: "#101828",
+    fontSize: 13.5,
+    fontWeight: "600",
     textAlign: "right",
     flexShrink: 1,
+    minWidth: 0,
+    flexGrow: 1,
+  },
+  metaValueEmphasized: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#101828",
+  },
+  metaValueFocus: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#101828",
+  },
+  varianceValue: {
+    color: KEPLER_RED,
   },
   emptyText: {
     ...typography.body,
-    color: "#9AA5B1",
-    marginBottom: 8,
+    color: "#667085",
+    fontSize: 13.5,
+    lineHeight: 19,
+    marginVertical: 8,
+    paddingHorizontal: 2,
+  },
+  emptyTextCalm: {
+    ...typography.body,
+    color: "#667085",
+    fontSize: 13.5,
+    lineHeight: 19,
+    marginVertical: 10,
+    paddingHorizontal: 2,
+  },
+  emptyStateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 2,
+    minHeight: 38,
+  },
+  emptyStateText: {
+    ...typography.body,
+    color: "#667085",
+    fontSize: 13.5,
+    lineHeight: 19,
+    flex: 1,
+    minWidth: 0,
+  },
+  supportingBody: {
+    ...typography.body,
+    color: "#475467",
+    fontSize: 13.5,
+    lineHeight: 19,
+    paddingHorizontal: 2,
+  },
+  evidenceSummaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 4,
   },
   agentDescription: {
     ...typography.body,
-    color: "#9AA5B1",
+    color: "#475467",
+    fontSize: 13.5,
+    lineHeight: 19,
+    marginTop: 2,
     marginBottom: 8,
+    paddingHorizontal: 2,
   },
   evidenceRequestCard: {
-    marginTop: 8,
-    marginBottom: 10,
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: "#151C25",
-    borderWidth: 1,
-    borderColor: "#3D4A5C",
+    marginTop: 6,
+    marginBottom: 8,
+    marginHorizontal: 0,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "rgba(227, 24, 55, 0.04)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(227, 24, 55, 0.12)",
   },
   evidenceRequestEyebrow: {
     ...typography.caption,
-    color: "#F0B429",
+    color: KEPLER_RED,
+    fontSize: 11,
     letterSpacing: 0.6,
+    fontWeight: "600",
     marginBottom: 6,
   },
   evidenceRequestMessage: {
     ...typography.body,
-    color: "#E8EEF6",
+    color: "#344054",
+    fontSize: 13.5,
+    lineHeight: 19,
     marginBottom: 12,
   },
   linkButton: {
+    minHeight: 44,
+    justifyContent: "center",
     paddingVertical: 8,
+    paddingHorizontal: 2,
+  },
+  linkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
   },
   linkButtonText: {
-    ...typography.button,
-    color: "#F4A623",
+    ...typography.bodyMedium,
+    color: KEPLER_NAVY,
+    fontSize: 13.5,
+    fontWeight: "600",
   },
   actionsTitle: {
-    ...typography.button,
-    color: "#8F9BA8",
-    marginTop: 30,
-    marginBottom: 12,
+    ...typography.caption,
+    color: "#475467",
+    fontSize: 11,
+    letterSpacing: 0.75,
+    fontWeight: "600",
+    marginTop: 22,
+    marginBottom: 10,
   },
   primaryButton: {
-    backgroundColor: "#F4A623",
-    borderRadius: 14,
+    backgroundColor: KEPLER_NAVY,
+    borderRadius: 15,
     minHeight: 52,
     alignItems: "center",
     justifyContent: "center",
@@ -1269,52 +1681,36 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     ...typography.bodyMedium,
-    color: "#111111",
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "600",
   },
-  secondaryButton: {
-    marginTop: 12,
-    backgroundColor: "#151C25",
-    borderWidth: 1,
-    borderColor: "#27313D",
-    borderRadius: 14,
-    minHeight: 52,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 16,
+  disabledActionRow: {
     flexDirection: "row",
-    gap: 8,
+    alignItems: "flex-start",
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.55)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(15,23,42,0.06)",
   },
-  shareButton: {
-    backgroundColor: "#F8FBFE",
-    borderColor: "#D6EAF9",
-  },
-  secondaryButtonText: {
-    ...typography.bodyMedium,
-    color: "#F4A623",
-  },
-  shareButtonText: {
-    ...typography.bodyMedium,
-    color: colors.brand.navy,
-  },
-  shareErrorText: {
-    ...typography.caption,
-    color: colors.danger,
-    marginTop: 8,
-  },
-  disabledActionCard: {
-    backgroundColor: "#151C25",
-    borderWidth: 1,
-    borderColor: "#27313D",
-    borderRadius: 14,
-    padding: 16,
+  disabledActionCopy: {
+    flex: 1,
+    minWidth: 0,
   },
   disabledActionTitle: {
     ...typography.bodyMedium,
-    color: "#FFFFFF",
+    color: "#101828",
+    fontSize: 13.5,
+    fontWeight: "600",
   },
   disabledActionBody: {
-    ...typography.button,
-    color: "#8F9BA8",
-    marginTop: 6,
+    ...typography.caption,
+    color: "#667085",
+    fontSize: 12.5,
+    lineHeight: 17,
+    marginTop: 3,
   },
 });

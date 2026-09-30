@@ -17,6 +17,7 @@ export type RemoteProjectInvitation = {
   id: string;
   /** Remote Firestore project document ID. */
   projectId: string;
+  projectName?: string;
   email: string;
   role: ProjectMemberRole;
   status: RemoteProjectInvitationStatus;
@@ -117,9 +118,14 @@ function parseRemoteInvitation(
     return null;
   }
 
+  const projectName = isNonEmptyString(record.projectName)
+    ? record.projectName.trim()
+    : undefined;
+
   return {
     id: record.id.trim(),
     projectId: record.projectId.trim(),
+    ...(projectName ? { projectName } : {}),
     email: record.email.trim().toLowerCase(),
     role: record.role,
     status: record.status as RemoteProjectInvitationStatus,

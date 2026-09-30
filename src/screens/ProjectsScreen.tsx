@@ -22,7 +22,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 
-import KeplerLogo from "../components/branding/KeplerLogo";
+import KeplerLogo from "../components/branding/KeplerLogo1";
 
 import {
   SafeAreaView,
@@ -534,10 +534,14 @@ const KEPLER_RED = "#E31837";
 const PROJECTS_BACKGROUND =
   require("../../assets/bg1.png");
 
-function renderProjectListAvatar(
-  avatarUri?: string | null,
-) {
-  if (avatarUri) {
+function ProjectListAvatar({
+  avatarUri,
+}: {
+  avatarUri?: string | null;
+}) {
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+
+  if (avatarUri && failedUri !== avatarUri) {
     return (
       <Image
         source={{
@@ -547,6 +551,7 @@ function renderProjectListAvatar(
           styles.projectAvatarImage
         }
         resizeMode="cover"
+        onError={() => setFailedUri(avatarUri)}
       />
     );
   }
@@ -1305,11 +1310,11 @@ export default function ProjectsScreen({
                     styles.headerBrand
                   }
                 >
-                  <KeplerLogo
-                    width={150}
-                    height={64}
-                    autoPlay
-                  />
+                   <KeplerLogo
+              width={108}
+              height={46}
+              autoPlay
+            />
                 </View>
 
                 <Pressable
@@ -2004,7 +2009,7 @@ export default function ProjectsScreen({
                         styles.projectAvatar
                       }
                     >
-                      {renderProjectListAvatar()}
+                      <ProjectListAvatar />
                     </View>
 
                     <View
@@ -2163,9 +2168,7 @@ export default function ProjectsScreen({
                       styles.projectAvatar
                     }
                   >
-                    {renderProjectListAvatar(
-                      item.avatarUri,
-                    )}
+                    <ProjectListAvatar avatarUri={item.avatarUri} />
                   </View>
 
                   <View

@@ -8,7 +8,11 @@ import { getProjectById } from "../repositories/projectsRepository.js";
 import {
   createDeltaIfAbsentForMeasurement,
 } from "../repositories/deltasRepository.js";
-import { createDeltaFromMeasurement } from "./createDeltaFromMeasurement.js";
+import {
+  buildDeltaFromMeasurement,
+  createCollaboratorReviewLocalDeltaId,
+  createDeltaFromMeasurement,
+} from "./createDeltaFromMeasurement.js";
 import {
   triggerFieldVarianceForNewDelta,
   type FieldVarianceTriggerDeps,
@@ -21,6 +25,7 @@ export type AcceptedMeasurementBridgeDeps = FieldVarianceTriggerDeps & {
   getProjectByIdFn?: typeof getProjectById;
   getPlanItemByIdFn?: typeof getPlanItemById;
   createDeltaIfAbsentFn?: typeof createDeltaIfAbsentForMeasurement;
+  /** @deprecated Prefer buildDeltaFromMeasurement via default path; kept for tests. */
   createDeltaFromMeasurementFn?: typeof createDeltaFromMeasurement;
 };
 
@@ -85,8 +90,6 @@ export async function bridgeAcceptedCollaboratorMeasurementToFieldVariance(
   const getPlanItemFn = deps.getPlanItemByIdFn ?? getPlanItemById;
   const createDeltaFn =
     deps.createDeltaIfAbsentFn ?? createDeltaIfAbsentForMeasurement;
-  const buildDeltaFn =
-    deps.createDeltaFromMeasurementFn ?? createDeltaFromMeasurement;
 
   const { projectId, measurement } = args;
 
@@ -159,7 +162,19 @@ export async function bridgeAcceptedCollaboratorMeasurementToFieldVariance(
     };
   }
 
-  const candidate = buildDeltaFn(measurement, planItem);
+  // Prefer legacy injectable helper when tests override it; otherwise use
+  // identity-aware builder with collaborator-stable localDeltaId.
+  let candidate: ReturnType<typeof createDeltaFromMeasurement>;
+  if (deps.createDeltaFromMeasurementFn) {
+    candidate = deps.createDeltaFromMeasurementFn(measurement, planItem);
+  } else {
+    const built = buildDeltaFromMeasurement(
+      measurement,
+      planItem,
+      createCollaboratorReviewLocalDeltaId(measurement.localMeasurementId),
+    );
+    candidate = built.status === "ok" ? built.delta : null;
+  }
 
   if (!candidate) {
     console.log(

@@ -37,11 +37,17 @@ export function normalizeUserProfileDocument(
   const displayName =
     typeof data.displayName === "string" ? data.displayName.trim() : "";
   const email = typeof data.email === "string" ? data.email.trim() : "";
+  const avatarStoragePath =
+    typeof data.avatarStoragePath === "string" &&
+    data.avatarStoragePath.trim().length > 0
+      ? data.avatarStoragePath.trim()
+      : null;
 
   return {
     uid: data.uid.trim(),
     displayName,
     email,
+    avatarStoragePath,
     createdAt: data.createdAt.trim(),
     updatedAt: data.updatedAt.trim(),
   };

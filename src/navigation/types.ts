@@ -218,6 +218,16 @@ export type RootStackParamList = {
   };
 
   /**
+   * Conversation information (participants, shared plan items, project link).
+   */
+  ChatInfo: {
+    remoteProjectId: string;
+    conversationId: string;
+    titleHint?: string;
+    subtitleHint?: string;
+  };
+
+  /**
    * Owner contribution review queue (Phase 2J.2).
    * projectId is the local owned project id; remote mapping resolved on screen.
    */
@@ -261,5 +271,12 @@ export type RootStackParamList = {
      */
     source?: "local" | "shared";
   };
+};
+
+export type OnboardingStackParamList = {
+  OnboardingWelcome: undefined;
+  OnboardingPlan: undefined;
+  OnboardingCapture: undefined;
+  OnboardingReconcile: undefined;
 };
 

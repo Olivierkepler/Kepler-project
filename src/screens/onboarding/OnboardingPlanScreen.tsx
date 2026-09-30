@@ -9,7 +9,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 
-import type { OnboardingStackParamList } from "../../navigation/OnboardingNavigator";
+import type { OnboardingStackParamList } from "../../navigation/types";
 import { typography } from "../../theme/colors";
 
 type Props = NativeStackScreenProps<

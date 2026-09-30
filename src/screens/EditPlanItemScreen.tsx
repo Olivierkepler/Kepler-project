@@ -2,6 +2,8 @@ import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
+  ImageBackground,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,6 +14,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import Ionicons from "@expo/vector-icons/Ionicons";
 
 import { useAuth } from "../auth/AuthProvider";
 import type { RootStackParamList } from "../navigation/types";
@@ -19,7 +22,18 @@ import { getRemotePlanItemId } from "../store/planItemCloudMappings";
 import { getPlanItemById, updatePlanItem } from "../store/planItems";
 import { markPlanItemUpdatePending } from "../store/planItemUpdateSyncState";
 import { syncPlanItemUpdateToCloud } from "../services/sync/planItemUpdate";
-import { typography } from "../theme/colors";
+import { syncPlanItemImageToCloud } from "../services/sync/planItemImageSync";
+import {
+  deletePlanItemImageFile,
+  pickPlanItemImage,
+  persistPlanItemImage,
+  type PickedPlanItemImage,
+} from "../services/planItems/planItemImageLocal";
+import { markPlanItemImageSyncPending } from "../store/planItemImageSyncState";
+import { colors, typography } from "../theme/colors";
+
+const KEPLER_NAVY = "#012169";
+const backgroundImage = require("../../assets/bgsignup.png");
 
 type Props = NativeStackScreenProps<RootStackParamList, "EditPlanItem">;
 
@@ -49,6 +63,79 @@ function parsePositiveNumber(raw: string): number | null {
   return value;
 }
 
+function ScreenBackground({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <ImageBackground
+      source={backgroundImage}
+      style={styles.background}
+      resizeMode="cover"
+    >
+      <SafeAreaView style={styles.safeArea} edges={["top"]}>
+        {children}
+      </SafeAreaView>
+    </ImageBackground>
+  );
+}
+
+function ScreenHeader({
+  onBack,
+}: {
+  onBack: () => void;
+}) {
+  return (
+    <View style={styles.topBar}>
+      <Pressable
+        style={styles.backButton}
+        onPress={onBack}
+        accessibilityRole="button"
+        accessibilityLabel="Go back"
+        hitSlop={8}
+      >
+        <Ionicons name="chevron-back" size={24} color={KEPLER_NAVY} />
+      </Pressable>
+      <Text style={styles.topBarTitle}>Edit plan item</Text>
+      <View style={styles.topBarPlaceholder} />
+    </View>
+  );
+}
+
+type FieldProps = {
+  label: string;
+  value: string;
+  onChangeText: (text: string) => void;
+  editable: boolean;
+  keyboardType?: "default" | "decimal-pad";
+  placeholder?: string;
+};
+
+function FormField({
+  label,
+  value,
+  onChangeText,
+  editable,
+  keyboardType = "default",
+  placeholder,
+}: FieldProps) {
+  return (
+    <View style={styles.fieldBlock}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <TextInput
+        style={styles.input}
+        value={value}
+        onChangeText={onChangeText}
+        keyboardType={keyboardType}
+        placeholder={placeholder}
+        placeholderTextColor="#98A2B3"
+        editable={editable}
+      />
+    </View>
+  );
+}
+
 export default function EditPlanItemScreen({ route, navigation }: Props) {
   const { user } = useAuth();
   const { projectId, planItemId } = route.params;
@@ -64,6 +151,11 @@ export default function EditPlanItemScreen({ route, navigation }: Props) {
   const [laborHoursText, setLaborHoursText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [originalImageUri, setOriginalImageUri] = useState<string | null>(null);
+  const [currentImageUri, setCurrentImageUri] = useState<string | null>(null);
+  const [imageDirty, setImageDirty] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [selectedImageContentType, setSelectedImageContentType] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -97,6 +189,11 @@ export default function EditPlanItemScreen({ route, navigation }: Props) {
         setUnitCostText(String(item.unitCost));
         setProductionRateText(String(item.productionRatePerDay));
         setLaborHoursText(String(item.laborHoursPerUnit));
+        setOriginalImageUri(item.imageUri ?? null);
+        setCurrentImageUri(item.imageUri ?? null);
+        setImageDirty(false);
+        setImageError(null);
+        setSelectedImageContentType(null);
         setNotFound(false);
         setLoading(false);
       }
@@ -148,48 +245,126 @@ export default function EditPlanItemScreen({ route, navigation }: Props) {
     setError(null);
     setSaving(true);
 
+    let newDurableImageUri: string | null = null;
+    let localUpdated = false;
+    const ownerUid = user.uid;
     try {
-      const ownerUid = user.uid;
-      const updated = await updatePlanItem(ownerUid, planItemId, {
-        label: trimmedLabel,
-        plannedValue,
-        unitCost,
-        productionRatePerDay,
-        laborHoursPerUnit,
-      });
+      let nextImageUri = originalImageUri;
 
-      if (!updated || updated.projectId !== projectId) {
-        setError("Plan item not found.");
+      // Required local save phase. Only failures here mean the edit itself
+      // could not be saved on this device.
+      try {
+        if (imageDirty && currentImageUri && currentImageUri !== originalImageUri) {
+          newDurableImageUri = await persistPlanItemImage(
+            ownerUid,
+            projectId,
+            planItemId,
+            currentImageUri,
+            selectedImageContentType ?? "image/jpeg",
+          );
+          nextImageUri = newDurableImageUri;
+        } else if (imageDirty && !currentImageUri) {
+          nextImageUri = null;
+        }
+
+        const updated = await updatePlanItem(ownerUid, planItemId, {
+          label: trimmedLabel,
+          plannedValue,
+          unitCost,
+          productionRatePerDay,
+          laborHoursPerUnit,
+          ...(imageDirty ? { imageUri: nextImageUri } : {}),
+        });
+
+        if (!updated || updated.projectId !== projectId) {
+          if (newDurableImageUri) {
+            void deletePlanItemImageFile(
+              ownerUid,
+              projectId,
+              planItemId,
+              newDurableImageUri,
+            );
+          }
+          setError("Plan item not found.");
+          return;
+        }
+        localUpdated = true;
+      } catch {
+        if (newDurableImageUri && !localUpdated) {
+          void deletePlanItemImageFile(
+            ownerUid,
+            projectId,
+            planItemId,
+            newDurableImageUri,
+          );
+        }
+        setError("Unable to save plan item.");
         return;
       }
 
-      const remotePlanItemId = await getRemotePlanItemId(
-        ownerUid,
-        projectId,
-        planItemId,
-      );
+      // Sync bookkeeping is best-effort. The local edit above is already
+      // committed and must not be reported as a failed save.
+      let syncBookkeepingFailed = false;
+      if (imageDirty) {
+        try {
+          await markPlanItemImageSyncPending(
+            ownerUid,
+            projectId,
+            planItemId,
+            nextImageUri ? "upload" : "remove",
+          );
 
-      // Local save already succeeded. Mark pending + best-effort cloud without
-      // blocking navigation on network latency.
-      if (remotePlanItemId) {
-        await markPlanItemUpdatePending(ownerUid, projectId, planItemId);
-        void syncPlanItemUpdateToCloud(
+          if (originalImageUri && originalImageUri !== nextImageUri) {
+            void deletePlanItemImageFile(
+              ownerUid,
+              projectId,
+              planItemId,
+              originalImageUri,
+            );
+          }
+
+          void syncPlanItemImageToCloud(ownerUid, projectId, planItemId)
+            .then((result) => {
+              if (!result.synced) {
+                Alert.alert("Saved on this device", "Plan Item image sync is pending.");
+              }
+            })
+            .catch(() => undefined);
+        } catch {
+          // Without this queue record, automatic image retry is not guaranteed.
+          syncBookkeepingFailed = true;
+        }
+      }
+
+      try {
+        const remotePlanItemId = await getRemotePlanItemId(
           ownerUid,
           projectId,
           planItemId,
-        ).then((result) => {
-          if (!result.synced) {
-            Alert.alert(
-              "Saved on this device",
-              "Cloud update is pending.",
-            );
+        );
+
+        if (remotePlanItemId) {
+          await markPlanItemUpdatePending(ownerUid, projectId, planItemId);
+          void syncPlanItemUpdateToCloud(ownerUid, projectId, planItemId)
+            .then((result) => {
+              if (!result.synced) {
+                Alert.alert("Saved on this device", "Cloud update is pending.");
+              }
+            })
+            .catch(() => undefined);
           }
-        });
+      } catch {
+        syncBookkeepingFailed = true;
+      }
+
+      if (syncBookkeepingFailed) {
+        Alert.alert(
+          "Saved on this device",
+          "Your changes were saved locally, but cloud synchronization could not be queued.",
+        );
       }
 
       navigation.goBack();
-    } catch {
-      setError("Unable to save plan item.");
     } finally {
       setSaving(false);
     }
@@ -197,228 +372,463 @@ export default function EditPlanItemScreen({ route, navigation }: Props) {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={["top"]}>
-        <View style={styles.container} />
-      </SafeAreaView>
+      <ScreenBackground>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator color={KEPLER_NAVY} />
+        </View>
+      </ScreenBackground>
     );
   }
 
   if (notFound) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={["top"]}>
+      <ScreenBackground>
         <View style={styles.container}>
-          <View style={styles.topBar}>
-            <Pressable
-              style={styles.backButton}
-              onPress={() => navigation.goBack()}
-            >
-              <Text style={styles.backButtonText}>←</Text>
-            </Pressable>
-            <Text style={styles.topBarTitle}>Edit Plan Item</Text>
-            <View style={styles.topBarPlaceholder} />
+          <ScreenHeader onBack={() => navigation.goBack()} />
+          <View style={styles.notFoundBlock}>
+            <View style={styles.notFoundIcon}>
+              <Ionicons
+                name="document-text-outline"
+                size={24}
+                color={KEPLER_NAVY}
+              />
+            </View>
+            <Text style={styles.notFoundTitle}>Plan item not found</Text>
+            <Text style={styles.notFoundBody}>
+              This item may have been removed or is no longer available.
+            </Text>
           </View>
-          <Text style={styles.emptyText}>Plan item not found.</Text>
         </View>
-      </SafeAreaView>
+      </ScreenBackground>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top"]}>
+    <ScreenBackground>
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.topBar}>
+          <ScreenHeader onBack={() => navigation.goBack()} />
+
+          <Text style={styles.eyebrow}>PLAN ITEM</Text>
+          <Text style={styles.introTitle}>Edit planning assumptions</Text>
+          <Text style={styles.introBody}>
+            Update this item&apos;s planning values. Changes are saved locally
+            and synchronized with Kepler Cloud.
+          </Text>
+
+          <View style={styles.typeUnitStrip}>
+            <Text style={styles.typeUnitLabel}>TYPE / UNIT</Text>
+            <View style={styles.typeUnitValues}>
+              <Text style={styles.typeUnitType}>
+                {typeLabel.toUpperCase()}
+              </Text>
+              <Text style={styles.typeUnitValue}>{unitLabel.toUpperCase()}</Text>
+            </View>
+          </View>
+
+          <View style={styles.imageSection}>
+            <View style={styles.imagePreviewWrap}>
+              {currentImageUri ? (
+                <Image
+                  source={{ uri: currentImageUri }}
+                  style={styles.imagePreview}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.imagePlaceholder}>
+                  <Ionicons name="image-outline" size={26} color="#98A2B3" />
+                </View>
+              )}
+            </View>
+            <View style={styles.imageTextBlock}>
+              <Text style={styles.imageTitle}>Plan Item image</Text>
+              <Text style={styles.imageSubtitle}>Optional</Text>
+              <View style={styles.imageActions}>
+                <Pressable
+                  onPress={() => {
+                    void pickPlanItemImage().then((picked: PickedPlanItemImage | null) => {
+                      if (picked) {
+                        setCurrentImageUri(picked.uri);
+                        setSelectedImageContentType(picked.contentType);
+                        setImageDirty(true);
+                        setImageError(null);
+                      }
+                    }).catch((pickError: unknown) => {
+                      setImageError(pickError instanceof Error ? pickError.message : "Unable to select image.");
+                    });
+                  }}
+                  disabled={saving}
+                  accessibilityRole="button"
+                  accessibilityLabel={currentImageUri ? "Change Plan Item image" : "Add Plan Item image"}
+                >
+                  <Text style={styles.imageActionText}>{currentImageUri ? "Change" : "Add image"}</Text>
+                </Pressable>
+                {currentImageUri ? (
+                  <Pressable
+                    onPress={() => {
+                      setCurrentImageUri(null);
+                      setSelectedImageContentType(null);
+                      setImageDirty(true);
+                      setImageError(null);
+                    }}
+                    disabled={saving}
+                    accessibilityRole="button"
+                    accessibilityLabel="Remove Plan Item image"
+                  >
+                    <Text style={styles.imageRemoveText}>Remove</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+              {imageError ? <Text style={styles.imageError}>{imageError}</Text> : null}
+            </View>
+          </View>
+
+          <FormField
+            label="Label"
+            value={label}
+            onChangeText={setLabel}
+            placeholder="Label"
+            editable={!saving}
+          />
+
+          <Text style={styles.sectionTitle}>PLANNING</Text>
+
+          <View style={styles.fieldPair}>
+            <View style={styles.fieldHalf}>
+              <FormField
+                label="Planned quantity"
+                value={plannedValueText}
+                onChangeText={setPlannedValueText}
+                keyboardType="decimal-pad"
+                placeholder="0"
+                editable={!saving}
+              />
+            </View>
+            <View style={styles.fieldHalf}>
+              <FormField
+                label="Unit cost ($)"
+                value={unitCostText}
+                onChangeText={setUnitCostText}
+                keyboardType="decimal-pad"
+                placeholder="0"
+                editable={!saving}
+              />
+            </View>
+          </View>
+
+          <View style={styles.fieldPair}>
+            <View style={styles.fieldHalf}>
+              <FormField
+                label="Production / day"
+                value={productionRateText}
+                onChangeText={setProductionRateText}
+                keyboardType="decimal-pad"
+                placeholder="0"
+                editable={!saving}
+              />
+            </View>
+            <View style={styles.fieldHalf}>
+              <FormField
+                label="Labor hours / unit"
+                value={laborHoursText}
+                onChangeText={setLaborHoursText}
+                keyboardType="decimal-pad"
+                placeholder="0"
+                editable={!saving}
+              />
+            </View>
+          </View>
+
+          {error ? (
+            <View style={styles.errorRow}>
+              <Ionicons
+                name="alert-circle-outline"
+                size={16}
+                color={colors.danger}
+              />
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
+
           <Pressable
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
+            style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+            onPress={() => {
+              void handleSave();
+            }}
+            disabled={saving}
+            accessibilityRole="button"
+            accessibilityLabel="Save changes"
           >
-            <Text style={styles.backButtonText}>←</Text>
+            {saving ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.saveButtonText}>Save changes</Text>
+            )}
           </Pressable>
-          <Text style={styles.topBarTitle}>Edit Plan Item</Text>
-          <View style={styles.topBarPlaceholder} />
-        </View>
-
-        <Text style={styles.readOnlyLabel}>TYPE / UNIT (READ-ONLY)</Text>
-        <Text style={styles.readOnlyValue}>
-          {typeLabel} · {unitLabel}
-        </Text>
-
-        <Text style={styles.label}>LABEL</Text>
-        <TextInput
-          style={styles.input}
-          value={label}
-          onChangeText={setLabel}
-          placeholder="Label"
-          placeholderTextColor="#667085"
-          editable={!saving}
-        />
-
-        <Text style={styles.label}>PLANNED VALUE</Text>
-        <TextInput
-          style={styles.input}
-          value={plannedValueText}
-          onChangeText={setPlannedValueText}
-          keyboardType="decimal-pad"
-          placeholder="0"
-          placeholderTextColor="#667085"
-          editable={!saving}
-        />
-
-        <Text style={styles.label}>UNIT COST</Text>
-        <TextInput
-          style={styles.input}
-          value={unitCostText}
-          onChangeText={setUnitCostText}
-          keyboardType="decimal-pad"
-          placeholder="0"
-          placeholderTextColor="#667085"
-          editable={!saving}
-        />
-
-        <Text style={styles.label}>PRODUCTION RATE / DAY</Text>
-        <TextInput
-          style={styles.input}
-          value={productionRateText}
-          onChangeText={setProductionRateText}
-          keyboardType="decimal-pad"
-          placeholder="0"
-          placeholderTextColor="#667085"
-          editable={!saving}
-        />
-
-        <Text style={styles.label}>LABOR HOURS / UNIT</Text>
-        <TextInput
-          style={styles.input}
-          value={laborHoursText}
-          onChangeText={setLaborHoursText}
-          keyboardType="decimal-pad"
-          placeholder="0"
-          placeholderTextColor="#667085"
-          editable={!saving}
-        />
-
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-        <Pressable
-          style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-          onPress={() => {
-            void handleSave();
-          }}
-          disabled={saving}
-        >
-          {saving ? (
-            <ActivityIndicator color="#111111" />
-          ) : (
-            <Text style={styles.saveButtonText}>Save Plan Item</Text>
-          )}
-        </Pressable>
       </ScrollView>
-    </SafeAreaView>
+    </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
+  background: {
+    flex: 1,
+    width: "100%",
+    height: "100%",
+  },
+
   safeArea: {
     flex: 1,
-    backgroundColor: "#0B0F14",
+    backgroundColor: "transparent",
   },
 
   container: {
     flex: 1,
     paddingHorizontal: 20,
+    backgroundColor: "transparent",
   },
 
   content: {
-    paddingBottom: 40,
+    paddingBottom: 48,
+  },
+
+  loadingContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   topBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingTop: 16,
-    marginBottom: 24,
-  },
-
-  backButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
-    backgroundColor: "#151C25",
-    borderWidth: 1,
-    borderColor: "#27313D",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  backButtonText: {
-    color: "#FFFFFF",
-    ...typography.title,
-  },
-
-  topBarTitle: {
-    color: "#FFFFFF",
-    ...typography.bodyLarge,
-    fontFamily: "Poppins_500Medium",
-  },
-
-  topBarPlaceholder: {
-    width: 42,
-  },
-
-  readOnlyLabel: {
-    color: "#748093",
-    ...typography.caption,
-    marginBottom: 6,
-  },
-
-  readOnlyValue: {
-    color: "#8F9BA8",
-    ...typography.body,
+    paddingTop: 8,
     marginBottom: 18,
   },
 
-  label: {
-    color: "#748093",
+  backButton: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: -6,
+  },
+
+  topBarTitle: {
+    ...typography.bodyMedium,
+    color: "#101828",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+
+  topBarPlaceholder: {
+    width: 44,
+  },
+
+  eyebrow: {
     ...typography.caption,
+    color: KEPLER_NAVY,
+    fontSize: 11.5,
+    letterSpacing: 0.8,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    opacity: 0.85,
+  },
+
+  introTitle: {
+    ...typography.sectionTitle,
+    color: "#101828",
+    fontSize: 21,
+    fontWeight: "600",
+    marginTop: 6,
+    letterSpacing: -0.3,
+  },
+
+  introBody: {
+    ...typography.body,
+    color: "#667085",
+    fontSize: 13.5,
+    lineHeight: 19,
+    marginTop: 6,
+    marginBottom: 20,
+  },
+
+  typeUnitStrip: {
+    backgroundColor: "rgba(255,255,255,0.74)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(15,23,42,0.07)",
+    borderRadius: 15,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 18,
+  },
+
+  imageSection: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 14,
+    marginBottom: 18,
+    backgroundColor: "rgba(255,255,255,0.76)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(1,33,105,0.08)",
+    borderRadius: 14,
+  },
+  imagePreviewWrap: { width: 62, height: 62, borderRadius: 31, overflow: "hidden", marginRight: 13, backgroundColor: "#EEF2F6" },
+  imagePreview: { width: 62, height: 62 },
+  imagePlaceholder: { flex: 1, alignItems: "center", justifyContent: "center" },
+  imageTextBlock: { flex: 1, minWidth: 0 },
+  imageTitle: { ...typography.bodyMedium, color: "#101828", fontWeight: "600" },
+  imageSubtitle: { ...typography.caption, color: "#98A2B3", marginTop: 2 },
+  imageActions: { flexDirection: "row", alignItems: "center", gap: 16, marginTop: 7 },
+  imageActionText: { ...typography.caption, color: KEPLER_NAVY, fontWeight: "600" },
+  imageRemoveText: { ...typography.caption, color: "#667085" },
+  imageError: { ...typography.caption, color: colors.danger, marginTop: 4 },
+
+  typeUnitLabel: {
+    ...typography.caption,
+    color: "#667085",
+    fontSize: 11.5,
+    letterSpacing: 0.6,
+    fontWeight: "600",
     marginBottom: 8,
   },
 
-  input: {
-    backgroundColor: "#151C25",
-    borderWidth: 1,
-    borderColor: "#27313D",
-    borderRadius: 12,
-    color: "#FFFFFF",
-    ...typography.bodyLarge,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
+  typeUnitValues: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+
+  typeUnitType: {
+    ...typography.bodyMedium,
+    color: "#101828",
+    fontSize: 14,
+    fontWeight: "600",
+    flex: 1,
+    minWidth: 0,
+  },
+
+  typeUnitValue: {
+    ...typography.bodyMedium,
+    color: KEPLER_NAVY,
+    fontSize: 14,
+    fontWeight: "600",
+    flexShrink: 0,
+  },
+
+  sectionTitle: {
+    ...typography.caption,
+    color: "#667085",
+    fontSize: 11.5,
+    letterSpacing: 0.8,
+    fontWeight: "600",
+    marginBottom: 10,
+    marginTop: 4,
+  },
+
+  fieldBlock: {
     marginBottom: 16,
   },
 
-  errorText: {
-    color: "#F07167",
-    ...typography.button,
-    fontFamily: "Poppins_400Regular",
+  fieldPair: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 2,
+  },
+
+  fieldHalf: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  fieldLabel: {
+    ...typography.caption,
+    color: "#475467",
+    fontSize: 12.5,
+    fontWeight: "500",
+    marginBottom: 7,
+  },
+
+  input: {
+    backgroundColor: "rgba(255,255,255,0.88)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(15,23,42,0.10)",
+    borderRadius: 14,
+    color: "#101828",
+    ...typography.body,
+    fontSize: 15,
+    minHeight: 52,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+
+  errorRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    marginTop: 4,
     marginBottom: 12,
   },
 
-  emptyText: {
-    color: "#7F8A98",
+  errorText: {
+    ...typography.caption,
+    color: colors.danger,
+    fontSize: 13,
+    lineHeight: 18,
+    flex: 1,
+    minWidth: 0,
+  },
+
+  notFoundBlock: {
+    alignItems: "center",
+    paddingHorizontal: 24,
+    paddingTop: 40,
+  },
+
+  notFoundIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(1,33,105,0.06)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(1,33,105,0.10)",
+    marginBottom: 14,
+  },
+
+  notFoundTitle: {
+    ...typography.sectionTitle,
+    color: "#101828",
+    fontSize: 18,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+
+  notFoundBody: {
     ...typography.body,
+    color: "#667085",
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "center",
+    marginTop: 8,
+    maxWidth: 280,
   },
 
   saveButton: {
-    marginTop: 8,
-    backgroundColor: "#F4A623",
-    borderRadius: 12,
-    height: 48,
+    marginTop: 12,
+    backgroundColor: KEPLER_NAVY,
+    borderRadius: 15,
+    minHeight: 52,
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 16,
   },
 
   saveButtonDisabled: {
@@ -426,7 +836,9 @@ const styles = StyleSheet.create({
   },
 
   saveButtonText: {
-    color: "#111111",
     ...typography.bodyMedium,
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "600",
   },
 });

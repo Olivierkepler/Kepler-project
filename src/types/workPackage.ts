@@ -29,6 +29,8 @@ export type WorkPackage = {
   status: WorkPackageStatus;
   /** Local PlanItem ids grouped into this scope (may be empty). */
   planItemIds: string[];
+  /** Short-lived cloud presentation URL; never persisted in the local store. */
+  imageUrl?: string;
   createdAt: string;
   updatedAt: string;
 };

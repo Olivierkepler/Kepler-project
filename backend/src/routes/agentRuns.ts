@@ -18,6 +18,8 @@ import {
   assertProjectAccessContext,
   type ProjectAccessContext,
 } from "../services/collaboration/projectAccessScope.js";
+import { recoverFieldVarianceEvidenceRun } from "../services/recoverFieldVarianceEvidenceRun.js";
+import { recoverStickyRequestEvidenceRun } from "../services/recoverStickyRequestEvidenceRun.js";
 import {
   handleRouteError,
   requireUserUid,
@@ -141,6 +143,120 @@ agentRunsRouter.get(
       }
 
       res.status(200).json(dto);
+    } catch (error) {
+      await handleRouteError(res, error);
+    }
+  },
+);
+
+/**
+ * Owner-only: reopen a failed Field Variance AgentRun after unusable evidence.
+ * Does not enqueue Cloud Tasks. Client must submit NEW Evidence afterward.
+ */
+agentRunsRouter.post(
+  "/projects/:projectId/agent-runs/:agentRunId/recover-evidence",
+  async (req, res) => {
+    try {
+      const uid = requireUserUid(req);
+      const projectId = req.params.projectId;
+      const agentRunId = req.params.agentRunId;
+
+      if (!uid) {
+        sendError(res, 401, "Unauthorized");
+        return;
+      }
+
+      if (!projectId || !agentRunId) {
+        sendError(res, 400, "projectId and agentRunId are required");
+        return;
+      }
+
+      await assertProjectOwnedByUser(projectId, uid);
+
+      const result = await recoverFieldVarianceEvidenceRun({
+        projectId,
+        agentRunId,
+        ownerUid: uid,
+      });
+
+      if (result.outcome === "not_found") {
+        sendError(res, 404, "Agent run not found");
+        return;
+      }
+
+      if (result.outcome === "not_eligible") {
+        sendError(res, 400, result.reason);
+        return;
+      }
+
+      const dto = toAgentRunSummaryDTO(result.agentRun);
+
+      if (!assertAgentRunDtoHasNoInternalFields(dto)) {
+        sendError(res, 500, "Internal server error");
+        return;
+      }
+
+      res.status(200).json({
+        outcome: result.outcome,
+        agentRun: dto,
+      });
+    } catch (error) {
+      await handleRouteError(res, error);
+    }
+  },
+);
+
+/**
+ * Owner-only: reopen sticky running/assess_variance after request_evidence
+ * fall-through. Distinct from recover-evidence (failed media). No Cloud Task.
+ */
+agentRunsRouter.post(
+  "/projects/:projectId/agent-runs/:agentRunId/recover-request-evidence",
+  async (req, res) => {
+    try {
+      const uid = requireUserUid(req);
+      const projectId = req.params.projectId;
+      const agentRunId = req.params.agentRunId;
+
+      if (!uid) {
+        sendError(res, 401, "Unauthorized");
+        return;
+      }
+
+      if (!projectId || !agentRunId) {
+        sendError(res, 400, "projectId and agentRunId are required");
+        return;
+      }
+
+      await assertProjectOwnedByUser(projectId, uid);
+
+      const result = await recoverStickyRequestEvidenceRun({
+        projectId,
+        agentRunId,
+        ownerUid: uid,
+      });
+
+      if (result.outcome === "not_found") {
+        sendError(res, 404, "Agent run not found");
+        return;
+      }
+
+      if (result.outcome === "not_eligible") {
+        sendError(res, 400, result.reason);
+        return;
+      }
+
+      const dto = toAgentRunSummaryDTO(result.agentRun);
+
+      if (!assertAgentRunDtoHasNoInternalFields(dto)) {
+        sendError(res, 500, "Internal server error");
+        return;
+      }
+
+      res.status(200).json({
+        outcome: result.outcome,
+        agentRun: dto,
+      });
     } catch (error) {
       await handleRouteError(res, error);
     }

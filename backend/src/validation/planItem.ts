@@ -1,5 +1,9 @@
 import type { PlanItem, PlanItemType } from "../domain/planItem.js";
 import {
+  isAllowedPlanItemImageContentType,
+  isPlanItemImageObjectId,
+} from "../storage/planItemImageStorage.js";
+import {
   isFiniteNumber,
   isNonEmptyString,
   isRecord,
@@ -55,6 +59,67 @@ export function parsePlanItem(body: unknown): PlanItem | null {
     unitCost: body.unitCost,
     productionRatePerDay: body.productionRatePerDay,
     laborHoursPerUnit: body.laborHoursPerUnit,
+  };
+}
+
+/**
+ * Normalizes a trusted Firestore PlanItem document. Legacy documents without
+ * imageStoragePath remain valid; client create payloads cannot set this field.
+ */
+export function parsePlanItemDocument(body: unknown): PlanItem | null {
+  if (!isRecord(body)) {
+    return null;
+  }
+
+  const planItem = parsePlanItem(body);
+  if (!planItem) {
+    return null;
+  }
+
+  if (
+    body.origin !== undefined &&
+    body.origin !== "manual" &&
+    body.origin !== "plan_import"
+  ) {
+    return null;
+  }
+  if (
+    body.planImportId !== undefined &&
+    typeof body.planImportId !== "string"
+  ) {
+    return null;
+  }
+  if (
+    body.planImportCandidateId !== undefined &&
+    typeof body.planImportCandidateId !== "string"
+  ) {
+    return null;
+  }
+
+  const imageStoragePath = body.imageStoragePath;
+  if (
+    imageStoragePath !== undefined &&
+    imageStoragePath !== null &&
+    !isNonEmptyString(imageStoragePath)
+  ) {
+    return null;
+  }
+
+  return {
+    ...planItem,
+    ...(body.origin !== undefined ? { origin: body.origin } : {}),
+    ...(body.planImportId !== undefined
+      ? { planImportId: body.planImportId }
+      : {}),
+    ...(body.planImportCandidateId !== undefined
+      ? { planImportCandidateId: body.planImportCandidateId }
+      : {}),
+    ...(imageStoragePath !== undefined
+      ? {
+          imageStoragePath:
+            imageStoragePath === null ? null : imageStoragePath.trim(),
+        }
+      : {}),
   };
 }
 
@@ -199,4 +264,37 @@ export function parsePlanItemUpdateInput(
   }
 
   return update;
+}
+
+export function parsePlanItemImageUploadUrlBody(
+  body: unknown,
+): { contentType: string } | null {
+  if (!isRecord(body) || typeof body.contentType !== "string") {
+    return null;
+  }
+  const contentType = body.contentType.trim().toLowerCase();
+  return isAllowedPlanItemImageContentType(contentType)
+    ? { contentType }
+    : null;
+}
+
+export function parsePlanItemImageCommitBody(
+  body: unknown,
+): { objectId: string; contentType: string } | null {
+  if (
+    !isRecord(body) ||
+    typeof body.objectId !== "string" ||
+    typeof body.contentType !== "string"
+  ) {
+    return null;
+  }
+  const objectId = body.objectId.trim().toLowerCase();
+  const contentType = body.contentType.trim().toLowerCase();
+  if (
+    !isPlanItemImageObjectId(objectId) ||
+    !isAllowedPlanItemImageContentType(contentType)
+  ) {
+    return null;
+  }
+  return { objectId, contentType };
 }

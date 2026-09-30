@@ -32,7 +32,7 @@ import {
   formatAuthErrorMessage,
 } from "../utils/authErrors";
 
-import KeplerLogo from "../components/branding/KeplerLogo";
+import KeplerLogo from "../components/branding/KeplerLogo1";
 
 /* -------------------------------------------------------------------------- */
 /* Background                                                                 */

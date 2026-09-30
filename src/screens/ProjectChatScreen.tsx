@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  ImageBackground,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -13,8 +14,11 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import Ionicons from "@expo/vector-icons/Ionicons";
 
 import ChatPlanItemReferenceCard from "../components/chat/ChatPlanItemReferenceCard";
+import GroupAvatar from "../components/user/GroupAvatar";
+import UserAvatar from "../components/user/UserAvatar";
 import {
   listConversationMessages,
   markConversationRead,
@@ -45,6 +49,8 @@ type Props = NativeStackScreenProps<RootStackParamList, "ProjectChat">;
 
 const POLL_MS = 2500;
 const PAGE_SIZE = 50;
+const KEPLER_NAVY = "#012169";
+const backgroundImage = require("../../assets/bgproject.png");
 
 function formatTimeLabel(iso: string): string {
   const date = new Date(iso);
@@ -193,7 +199,7 @@ export default function ProjectChatScreen({ route, navigation }: Props) {
       return titleHint.trim();
     }
     if (conversation?.type === "project") {
-      return "Project Chat.";
+      return "Project Chat";
     }
     return "Direct Chat";
   }, [conversation?.type, titleHint]);
@@ -207,6 +213,35 @@ export default function ProjectChatScreen({ route, navigation }: Props) {
     }
     return "Private conversation";
   }, [conversation?.type, subtitleHint]);
+
+  const headerAvatarIcon = useMemo<"people" | "person">(() => {
+    if (conversation?.type === "direct") {
+      return "person";
+    }
+    if (conversation?.type === "project") {
+      return "people";
+    }
+    if (subtitleHint?.trim() === "Private conversation") {
+      return "person";
+    }
+    if (subtitleHint?.trim() === "Project Chat") {
+      return "people";
+    }
+    return "people";
+  }, [conversation?.type, subtitleHint]);
+
+  const otherParticipant = useMemo(() => {
+    if (!currentProjectMemberId) {
+      return [...participantsById.values()].find(
+        (participant) => participant.userId !== user?.uid,
+      );
+    }
+
+    return [...participantsById.values()].find(
+      (participant) =>
+        participant.projectMemberId !== currentProjectMemberId,
+    );
+  }, [currentProjectMemberId, participantsById, user?.uid]);
 
   const canSend =
     (draft.trim().length > 0 || !!pendingReferenceId) && !sending;
@@ -391,25 +426,61 @@ export default function ProjectChatScreen({ route, navigation }: Props) {
   };
 
   return (
+    <ImageBackground
+      source={backgroundImage}
+      style={styles.background}
+      resizeMode="cover"
+    >
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
       <View style={styles.topBar}>
         <Pressable
           onPress={() => navigation.goBack()}
           accessibilityRole="button"
           accessibilityLabel="Go back"
+          hitSlop={8}
           style={styles.backButton}
         >
-          <Text style={styles.backButtonText}>←</Text>
+          <Ionicons name="chevron-back" size={25} color={KEPLER_NAVY} />
         </Pressable>
-        <View style={styles.topBarCopy}>
-          <Text style={styles.topBarTitle} numberOfLines={1}>
-            {headerTitle}
-          </Text>
-          <Text style={styles.topBarSubtitle} numberOfLines={1}>
-            {headerSubtitle}
-          </Text>
-        </View>
-        <View style={styles.topBarSpacer} />
+        <Pressable
+          onPress={() =>
+            navigation.navigate("ChatInfo", {
+              remoteProjectId,
+              conversationId,
+              titleHint,
+              subtitleHint,
+            })
+          }
+          style={styles.headerIdentity}
+          accessibilityRole="button"
+          accessibilityLabel="Open chat information"
+        >
+          {headerAvatarIcon === "people" ? (
+            <GroupAvatar
+              size={44}
+              imageUrl={
+                conversation?.type === "project"
+                  ? conversation.avatarUrl
+                  : undefined
+              }
+              style={styles.headerAvatarSpacing}
+            />
+          ) : (
+            <UserAvatar
+              imageUrl={otherParticipant?.avatarUrl}
+              size={44}
+              style={styles.headerAvatarSpacing}
+            />
+          )}
+          <View style={styles.topBarCopy}>
+            <Text style={styles.topBarTitle} numberOfLines={1}>
+              {headerTitle}
+            </Text>
+            <Text style={styles.topBarSubtitle} numberOfLines={1}>
+              {headerSubtitle}
+            </Text>
+          </View>
+        </Pressable>
       </View>
 
       <KeyboardAvoidingView
@@ -419,7 +490,7 @@ export default function ProjectChatScreen({ route, navigation }: Props) {
       >
         {loading ? (
           <View style={styles.centered}>
-            <ActivityIndicator color={colors.brand.navy} />
+            <ActivityIndicator color={KEPLER_NAVY} />
           </View>
         ) : (
           <FlatList
@@ -427,6 +498,7 @@ export default function ProjectChatScreen({ route, navigation }: Props) {
             data={messages}
             keyExtractor={(item) => item.id}
             renderItem={renderMessage}
+            style={styles.messageList}
             contentContainerStyle={styles.listContent}
             onScroll={(event) => {
               const { contentOffset, contentSize, layoutMeasurement } =
@@ -454,29 +526,67 @@ export default function ProjectChatScreen({ route, navigation }: Props) {
                   accessibilityState={{ busy: loadingOlder }}
                 >
                   {loadingOlder ? (
-                    <ActivityIndicator color={colors.brand.navy} />
+                    <ActivityIndicator color={KEPLER_NAVY} size="small" />
                   ) : (
-                    <Text style={styles.loadOlderText}>Load earlier messages</Text>
+                    <View style={styles.loadOlderContent}>
+                      <Ionicons
+                        name="chevron-up"
+                        size={14}
+                        color="#667085"
+                      />
+                      <Text style={styles.loadOlderText}>
+                        Load earlier messages
+                      </Text>
+                    </View>
                   )}
                 </Pressable>
               ) : null
             }
             ListEmptyComponent={
-              <Text style={styles.emptyText}>
-                No messages yet. Start the conversation.
-              </Text>
+              <View style={styles.emptyState}>
+                <View style={styles.emptyStatePanel}>
+                  <Ionicons
+                    name="chatbubble-ellipses-outline"
+                    size={28}
+                    color="#98A2B3"
+                  />
+                  <Text style={styles.emptyTitle}>No messages yet</Text>
+                  <Text style={styles.emptySubtitle}>
+                    Start the conversation.
+                  </Text>
+                </View>
+              </View>
             }
           />
         )}
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? (
+          <View style={styles.errorRow}>
+            <Ionicons
+              name="alert-circle-outline"
+              size={15}
+              color={colors.danger}
+            />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
 
         <View style={styles.composer}>
           {pendingReferenceId ? (
             <View style={styles.pendingChip}>
-              <Text style={styles.pendingChipText} numberOfLines={1}>
-                PLAN ITEM: {pendingReferenceLabel ?? "Plan Item"}
-              </Text>
+              <View style={styles.pendingChipIcon}>
+                <Ionicons
+                  name="document-text-outline"
+                  size={18}
+                  color={KEPLER_NAVY}
+                />
+              </View>
+              <View style={styles.pendingChipCopy}>
+                <Text style={styles.pendingChipEyebrow}>Plan item</Text>
+                <Text style={styles.pendingChipText} numberOfLines={1}>
+                  {pendingReferenceLabel ?? "Plan Item"}
+                </Text>
+              </View>
               <Pressable
                 onPress={() => {
                   setPendingReferenceId(null);
@@ -489,8 +599,9 @@ export default function ProjectChatScreen({ route, navigation }: Props) {
                 accessibilityRole="button"
                 accessibilityLabel="Remove Plan Item reference"
                 hitSlop={8}
+                style={styles.pendingChipClearButton}
               >
-                <Text style={styles.pendingChipClear}>×</Text>
+                <Ionicons name="close" size={18} color="#667085" />
               </Pressable>
             </View>
           ) : null}
@@ -522,90 +633,134 @@ export default function ProjectChatScreen({ route, navigation }: Props) {
             {sending ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.sendButtonText}>Send</Text>
+              <Ionicons name="send" size={19} color="#FFFFFF" />
             )}
           </Pressable>
           </View>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
+    </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
+  background: {
+    flex: 1,
+    width: "100%",
+    height: "100%",
+  },
   safeArea: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: "transparent",
   },
   flex: {
     flex: 1,
+    backgroundColor: "transparent",
+  },
+  messageList: {
+    backgroundColor: "transparent",
   },
   topBar: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    minHeight: 64,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+    borderBottomColor: "rgba(15,23,42,0.06)",
+    backgroundColor: "rgba(255,255,255,0.94)",
   },
   backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
+    width: 44,
+    height: 44,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.surface,
+    marginLeft: -4,
   },
-  backButtonText: {
-    ...typography.title,
-    color: colors.text.primary,
+  headerIdentity: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  headerAvatarSpacing: {
+    marginRight: 10,
+    flexShrink: 0,
   },
   topBarCopy: {
     flex: 1,
-    marginHorizontal: 12,
+    minWidth: 0,
   },
   topBarTitle: {
     ...typography.bodyMedium,
-    color: colors.text.primary,
+    color: "#101828",
+    fontSize: 16,
+    fontWeight: "600",
   },
   topBarSubtitle: {
     ...typography.caption,
-    color: colors.text.secondary,
-    marginTop: 2,
-  },
-  topBarSpacer: {
-    width: 40,
+    color: "#667085",
+    fontSize: 12.5,
+    marginTop: 1,
   },
   centered: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "transparent",
   },
   listContent: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingHorizontal: 11,
+    paddingVertical: 14,
     flexGrow: 1,
   },
   loadOlderButton: {
     alignSelf: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    marginBottom: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+  },
+  loadOlderContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
   },
   loadOlderText: {
     ...typography.caption,
-    color: colors.brand.navy,
+    color: "#667085",
+    fontSize: 12.5,
   },
-  emptyText: {
+  emptyState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    paddingTop: 48,
+  },
+  emptyStatePanel: {
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    borderRadius: 16,
+    // backgroundColor: "rgba(255,255,255,0.88)",
+  },
+  emptyTitle: {
+    ...typography.bodyMedium,
+    color: "#475467",
+    fontSize: 15,
+    fontWeight: "600",
+    marginTop: 4,
+  },
+  emptySubtitle: {
     ...typography.body,
-    color: colors.text.secondary,
+    color: "#98A2B3",
+    fontSize: 13.5,
     textAlign: "center",
-    marginTop: 40,
   },
   bubbleRow: {
-    marginBottom: 10,
+    marginBottom: 5,
     flexDirection: "row",
   },
   bubbleRowMine: {
@@ -615,115 +770,154 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start",
   },
   bubble: {
-    maxWidth: "82%",
+    maxWidth: "84%",
     borderRadius: 16,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingTop: 8,
+    paddingBottom: 6,
   },
   bubbleMine: {
-    backgroundColor: "#E8EEF8",
+    backgroundColor: "rgba(231,238,249,0.96)",
     borderBottomRightRadius: 4,
   },
   bubbleOther: {
-    backgroundColor: "#F4F6F8",
+    backgroundColor: "rgba(255,255,255,0.94)",
     borderBottomLeftRadius: 4,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(15,23,42,0.06)",
   },
   senderName: {
     ...typography.caption,
-    color: colors.brand.navy,
+    color: KEPLER_NAVY,
+    fontSize: 11.5,
+    fontWeight: "600",
     marginBottom: 2,
   },
   bubbleText: {
     ...typography.body,
+    fontSize: 14.5,
+    lineHeight: 20,
+    color: "#101828",
   },
   bubbleTextMine: {
-    color: colors.text.primary,
+    color: "#101828",
   },
   bubbleTextOther: {
-    color: colors.text.primary,
+    color: "#101828",
   },
   bubbleTime: {
     ...typography.caption,
-    marginTop: 4,
+    marginTop: 3,
     alignSelf: "flex-end",
+    fontSize: 10.5,
+    color: "#98A2B3",
   },
   bubbleTimeMine: {
-    color: colors.text.muted,
+    color: "#98A2B3",
   },
   bubbleTimeOther: {
-    color: colors.text.muted,
+    color: "#98A2B3",
   },
   composer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 11,
+    paddingTop: 8,
+    paddingBottom: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    backgroundColor: colors.surface,
+    borderTopColor: "rgba(15,23,42,0.06)",
+    backgroundColor: "rgba(255,255,255,0.95)",
     gap: 8,
   },
   composerRow: {
     flexDirection: "row",
     alignItems: "flex-end",
-    gap: 10,
+    gap: 8,
   },
   pendingChip: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    borderWidth: 1,
-    borderColor: "#D6EAF9",
-    backgroundColor: "#F8FBFE",
-    borderRadius: 10,
-    paddingHorizontal: 12,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderRadius: 12,
+    paddingHorizontal: 10,
     paddingVertical: 8,
+    gap: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(1,33,105,0.08)",
+  },
+  pendingChipIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(1,33,105,0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  pendingChipCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  pendingChipEyebrow: {
+    ...typography.caption,
+    color: KEPLER_NAVY,
+    fontSize: 11,
+    fontWeight: "600",
+    textTransform: "capitalize",
   },
   pendingChipText: {
     ...typography.caption,
-    color: colors.brand.navy,
-    flex: 1,
-    marginRight: 8,
+    color: "#101828",
+    fontSize: 13,
+    marginTop: 1,
   },
-  pendingChipClear: {
-    ...typography.title,
-    color: colors.text.muted,
-    lineHeight: 20,
+  pendingChipClearButton: {
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
   },
   composerInput: {
     flex: 1,
     minHeight: 44,
     maxHeight: 120,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 14,
-    paddingHorizontal: 12,
+    borderRadius: 22,
+    paddingHorizontal: 16,
     paddingVertical: 10,
     ...typography.body,
-    color: colors.text.primary,
-    backgroundColor: "#FFFFFF",
+    fontSize: 15,
+    lineHeight: 20,
+    color: "#101828",
+    backgroundColor: "rgba(244,246,248,0.96)",
   },
   sendButton: {
-    minHeight: 44,
-    minWidth: 72,
-    borderRadius: 14,
-    backgroundColor: colors.brand.navy,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: KEPLER_NAVY,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 14,
+    flexShrink: 0,
   },
   sendButtonDisabled: {
-    opacity: 0.45,
+    backgroundColor: "rgba(1,33,105,0.30)",
   },
   sendButtonPressed: {
-    opacity: 0.9,
+    opacity: 0.85,
   },
-  sendButtonText: {
-    ...typography.button,
-    color: "#FFFFFF",
+  errorRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingBottom: 4,
+    backgroundColor: "rgba(255,255,255,0.92)",
   },
   errorText: {
     ...typography.caption,
     color: colors.danger,
-    paddingHorizontal: 16,
-    paddingBottom: 6,
+    fontSize: 12.5,
+    lineHeight: 17,
+    flex: 1,
+    minWidth: 0,
   },
 });

@@ -106,8 +106,9 @@ function isValidWorkPackage(item: WorkPackage): boolean {
 }
 
 function copyWorkPackage(item: WorkPackage): WorkPackage {
+  const { imageUrl: _presentationUrl, ...persistedFields } = item;
   return {
-    ...item,
+    ...persistedFields,
     planItemIds: [...item.planItemIds],
   };
 }

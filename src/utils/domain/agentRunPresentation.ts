@@ -17,6 +17,8 @@ export type AgentRunCtaType =
   | "view_run"
   | "add_evidence"
   | "review_summary"
+  | "recover_evidence"
+  | "recover_sticky_request_evidence"
   | null;
 
 export type AgentRunProgressStepState = "complete" | "active" | "pending";
@@ -70,6 +72,13 @@ function resolveBadge(run: AgentRunSummary): AgentRunBadge {
     return "NEEDS EVIDENCE";
   }
 
+  if (
+    run.status === "running" &&
+    run.canRecoverStickyRequestEvidence === true
+  ) {
+    return "NEEDS EVIDENCE";
+  }
+
   if (run.status === "failed") {
     return "NEEDS ATTENTION";
   }
@@ -115,12 +124,20 @@ function resolveDescription(run: AgentRunSummary): string {
     case "PREPARING SUMMARY":
       return "Preparing agent summary.";
     case "NEEDS EVIDENCE":
+      if (
+        run.status === "running" &&
+        run.canRecoverStickyRequestEvidence === true
+      ) {
+        return "Capture another clear photo showing the affected work.";
+      }
       return run.pendingRequest?.message ??
         "Add a field photo or note documenting this difference.";
     case "SUMMARY READY":
       return "Agent summary ready for review.";
     case "NEEDS ATTENTION":
-      return "The automated review could not be completed.";
+      return run.canRecoverEvidence
+        ? "The submitted photo could not be analyzed. Try another photo."
+        : "The automated review could not be completed.";
     case "ESCALATED":
       return (
         run.outcome?.userVisibleRationale ??
@@ -140,6 +157,17 @@ function resolveCta(run: AgentRunSummary): {
     run.pendingRequest?.kind === "delta_evidence"
   ) {
     return { ctaType: "add_evidence", summaryId: null };
+  }
+
+  if (
+    run.status === "running" &&
+    run.canRecoverStickyRequestEvidence === true
+  ) {
+    return { ctaType: "recover_sticky_request_evidence", summaryId: null };
+  }
+
+  if (run.status === "failed" && run.canRecoverEvidence === true) {
+    return { ctaType: "recover_evidence", summaryId: null };
   }
 
   if (

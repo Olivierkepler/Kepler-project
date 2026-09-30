@@ -22,6 +22,8 @@ export type PlanItem = {
   unitCost: number;
   productionRatePerDay: number;
   laborHoursPerUnit: number;
+  /** Private Firebase Storage path; never serialize directly to API clients. */
+  imageStoragePath?: string | null;
 
   /**
    * Provenance (Phase 2P.5). Optional so existing manual items remain valid.
