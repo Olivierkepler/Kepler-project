@@ -22,6 +22,7 @@ export type ActivitySourceType =
   | "assignment_create"
   | "team_assignment_create"
   | "team_assignment_remove"
+  | "evidence_create"
   | "delta_create"
   | "invitation_create"
   | "invitation_accept"
@@ -52,6 +53,7 @@ export type ActivityEventType =
   | "member_removed"
   | "team_assignment_created"
   | "team_assignment_removed"
+  | "evidence_created"
   | "feed_post_edited"
   | "feed_post_deleted";
 
@@ -77,6 +79,7 @@ export const ACTIVITY_EVENT_TYPES: readonly ActivityEventType[] = [
   "member_removed",
   "team_assignment_created",
   "team_assignment_removed",
+  "evidence_created",
   "feed_post_edited",
   "feed_post_deleted",
 ] as const;
@@ -91,6 +94,7 @@ export const VIEWER_VISIBLE_ACTIVITY_TYPES: ReadonlySet<ActivityEventType> =
     "measurement_accepted",
     "measurement_rejected",
     "delta_created",
+    "evidence_created",
     "agent_evidence_requested",
     "agent_completed",
     "agent_escalated",
@@ -165,6 +169,7 @@ export function buildActivityEventId(parts: {
     | "assignment-create"
     | "team-assignment-create"
     | "team-assignment-remove"
+    | "evidence-create"
     | "delta-create"
     | "agent-evidence-requested"
     | "agent-terminal"

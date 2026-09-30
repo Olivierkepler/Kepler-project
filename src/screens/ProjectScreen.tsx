@@ -1,11 +1,13 @@
 import React, {
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from "react";
 
 import {
   Image,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -34,8 +36,8 @@ import ProjectPlan from "../components/project/ProjectPlan";
 import ProjectPlanContent from "../components/project/ProjectPlanContent";
 import ProjectProgressManagementModal from "../components/project/ProjectProgressManagementModal";
 import ProjectTeamContent from "../components/project/ProjectTeamContent";
-import WorkPackagesSection from "../components/project/WorkPackagesSection";
 import WorkProgressContent from "../components/project/WorkProgressContent";
+import { ProjectActivityContent } from "./ProjectActivityScreen";
 
 import type {
   ProjectMemberRole,
@@ -49,10 +51,6 @@ import {
   loadSharedProjectSnapshot,
   SharedProjectUnavailableError,
 } from "../services/api/sharedProjects";
-
-import {
-  getPendingRemoteMeasurements,
-} from "../services/api/measurements";
 
 import {
   getRemoteWorkPackageAssignmentsForProject,
@@ -70,9 +68,6 @@ import {
   getDeltasForProject,
 } from "../store/deltas";
 
-import {
-  getEvidenceForProject,
-} from "../store/evidence";
 
 import {
   getMeasurementsForProject,
@@ -92,9 +87,6 @@ import type {
   Delta,
 } from "../types/delta";
 
-import type {
-  Evidence,
-} from "../types/evidence";
 
 import type {
   Measurement,
@@ -117,31 +109,9 @@ import type {
 } from "../types/workPackageAssignment";
 
 import {
-  calculateDifference,
-  calculatePercentDifference,
-} from "../utils/calculations/comparison";
-
-import {
-  buildProjectIntelligence,
-} from "../utils/domain/projectIntelligence";
-
-import {
-  summarizeDeltas,
-} from "../utils/domain/summarizeDeltas";
-
-import {
   type UserPresentationRecord,
 } from "../utils/domain/memberDisplay";
 import { fetchMemberPresentationContext } from "../utils/domain/memberPresentationContext";
-
-import {
-  effectiveMeasurementReviewStatus,
-} from "../utils/measurementReview";
-
-import {
-  formatSubmissionReviewStatusLabel,
-  measurementReviewStatusColor,
-} from "../utils/domain/statusPresentation";
 import Ionicons from "@expo/vector-icons/Ionicons";
 
 type Props =
@@ -212,93 +182,6 @@ function isAssignedScopeRole(
   );
 }
 
-function formatPlannedValue(
-  value: number,
-  unit: string,
-): string {
-  if (unit === "ea") {
-    return `${value} ${unit}`;
-  }
-
-  return `${value.toFixed(
-    2,
-  )} ${unit}`;
-}
-
-function formatSignedValue(
-  value: number,
-  unit: string,
-): string {
-  const sign =
-    value > 0 ? "+" : "";
-
-  return `${sign}${value.toFixed(
-    2,
-  )} ${unit}`;
-}
-
-function formatSignedPercent(
-  value: number,
-): string {
-  const sign =
-    value > 0 ? "+" : "";
-
-  return `${sign}${value.toFixed(
-    1,
-  )}%`;
-}
-
-function formatSignedCurrency(
-  value: number,
-): string {
-  if (value === 0) {
-    return "$0.00";
-  }
-
-  const sign =
-    value > 0 ? "+" : "-";
-
-  return `${sign}$${Math.abs(
-    value,
-  ).toFixed(2)}`;
-}
-
-function formatSignedDays(
-  value: number,
-): string {
-  const absolute =
-    Math.abs(value).toFixed(2);
-
-  const unitLabel =
-    Math.abs(value) === 1
-      ? "day"
-      : "days";
-
-  if (value === 0) {
-    return `0.00 ${unitLabel}`;
-  }
-
-  const sign =
-    value > 0 ? "+" : "-";
-
-  return `${sign}${absolute} ${unitLabel}`;
-}
-
-function formatSignedHours(
-  value: number,
-): string {
-  if (value === 0) {
-    return "0.00 hr";
-  }
-
-  const sign =
-    value > 0 ? "+" : "-";
-
-  return `${sign}${Math.abs(
-    value,
-  ).toFixed(2)} hr`;
-}
-
 /* -------------------------------------------------------------------------- */
 /*                         Project Screen UI Components                       */
 /* -------------------------------------------------------------------------- */
@@ -342,151 +225,6 @@ function GlassIconButton({
           <Text style={styles.projectsBackText}>{label}</Text>
         ) : null}
     </Pressable>
-  );
-}
-
-type ProjectNavRowProps = {
-  iconName: React.ComponentProps<
-    typeof Ionicons
-  >["name"];
-  title: string;
-  description: string;
-  onPress: () => void;
-  accessibilityLabel: string;
-  isLast?: boolean;
-};
-
-function ProjectNavRow({
-  iconName,
-  title,
-  description,
-  onPress,
-  accessibilityLabel,
-  isLast = false,
-}: ProjectNavRowProps) {
-  return (
-    <Pressable
-      style={[
-        styles.navRow,
-        isLast && styles.navRowLast,
-      ]}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={
-        accessibilityLabel
-      }
-    >
-      <View
-        style={
-          styles.navRowIconWrap
-        }
-      >
-        <Ionicons
-          name={iconName}
-          size={20}
-          color={NAVY}
-        />
-      </View>
-
-      <View
-        style={
-          styles.navRowContent
-        }
-      >
-        <Text
-          style={
-            styles.navRowTitle
-          }
-        >
-          {title}
-        </Text>
-
-        <Text
-          style={
-            styles.navRowDescription
-          }
-        >
-          {description}
-        </Text>
-      </View>
-
-      <Ionicons
-        name="chevron-forward"
-        size={18}
-        color={
-          colors.text.muted
-        }
-      />
-    </Pressable>
-  );
-}
-
-type OperationalShortcutProps = {
-  iconName: React.ComponentProps<
-    typeof Ionicons
-  >["name"];
-  title: string;
-  description: string;
-  onPress?: () => void;
-};
-
-function OperationalShortcut({
-  iconName,
-  title,
-  description,
-  onPress,
-}: OperationalShortcutProps) {
-  const content = (
-    <>
-      <View
-        style={
-          styles.actionIconWrap
-        }
-      >
-        <Ionicons
-          name={iconName}
-          size={20}
-          color={NAVY}
-        />
-      </View>
-
-      <View>
-        <Text
-          style={
-            styles.actionTitle
-          }
-        >
-          {title}
-        </Text>
-
-        <Text
-          style={
-            styles.actionDescription
-          }
-        >
-          {description}
-        </Text>
-      </View>
-    </>
-  );
-
-  if (onPress) {
-    return (
-      <Pressable
-        style={styles.action}
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={title}
-      >
-        {content}
-      </Pressable>
-    );
-  }
-
-  return (
-    <View style={styles.action}>
-      {content}
-    </View>
   );
 }
 
@@ -630,6 +368,8 @@ export default function ProjectScreen({
   const [failedProjectAvatarUri, setFailedProjectAvatarUri] = useState<
     string | null
   >(null);
+  const [projectToolsVisible, setProjectToolsVisible] = useState(false);
+  const pendingProjectToolAction = useRef<(() => void) | null>(null);
   const [progressManagementVisible, setProgressManagementVisible] =
     useState(false);
   const [progressRemoteProjectId, setProgressRemoteProjectId] = useState<
@@ -684,13 +424,6 @@ export default function ProjectScreen({
   ] = useState<Delta[]>([]);
 
   const [
-    projectEvidence,
-    setProjectEvidence,
-  ] = useState<
-    Evidence[]
-  >([]);
-
-  const [
     sharedWorkPackages,
     setSharedWorkPackages,
   ] = useState<WorkPackage[]>([]);
@@ -721,16 +454,6 @@ export default function ProjectScreen({
     setSharedRetryToken,
   ] = useState(0);
 
-  const [
-    pendingReviewCount,
-    setPendingReviewCount,
-  ] = useState(0);
-
-  const [
-    readyForReviewCount,
-    setReadyForReviewCount,
-  ] = useState(0);
-
   /* ------------------------------------------------------------------------ */
   /* Project Loading                                                          */
   /* ------------------------------------------------------------------------ */
@@ -742,14 +465,10 @@ export default function ProjectScreen({
         setPlannedItems([]);
         setMeasurements([]);
         setProjectDeltas([]);
-        setProjectEvidence([]);
         setSharedWorkPackages([]);
         setSharedAssignments([]);
         setSharedProfileByUserId(new Map());
         setSharedError(null);
-        setPendingReviewCount(0);
-        setReadyForReviewCount(0);
-
         return;
       }
 
@@ -764,7 +483,6 @@ export default function ProjectScreen({
           planItems,
           measurementItems,
           deltaItems,
-          evidenceItems,
         ] =
           await Promise.all([
             getProjectById(
@@ -787,10 +505,6 @@ export default function ProjectScreen({
               projectId,
             ),
 
-            getEvidenceForProject(
-              ownerUid,
-              projectId,
-            ),
           ]);
 
         if (active) {
@@ -812,103 +526,14 @@ export default function ProjectScreen({
             deltaItems,
           );
 
-          setProjectEvidence(
-            evidenceItems,
-          );
         }
 
-        if (
-          !found ||
-          !active
-        ) {
-          if (active) {
-            setPendingReviewCount(
-              0,
-            );
-
-            setReadyForReviewCount(
-              0,
-            );
-          }
-
-          return;
-        }
-
-        try {
-          const remoteId =
-            await getRemoteProjectId(
-              ownerUid,
-              projectId,
-            );
-
-          if (!remoteId) {
-            if (active) {
-              setPendingReviewCount(
-                0,
-              );
-
-              setReadyForReviewCount(
-                0,
-              );
-            }
-
-            return;
-          }
-
-          const [
-            pending,
-            assignments,
-          ] =
-            await Promise.all([
-              getPendingRemoteMeasurements(
-                remoteId,
-              ),
-
-              getRemoteWorkPackageAssignmentsForProject(
-                remoteId,
-              ).catch(
-                () => [],
-              ),
-            ]);
-
-          if (active) {
-            setPendingReviewCount(
-              pending.length,
-            );
-
-            setReadyForReviewCount(
-              assignments.filter(
-                (item) =>
-                  item.status ===
-                  "ready_for_review",
-              ).length,
-            );
-          }
-        } catch {
-          if (active) {
-            setPendingReviewCount(
-              0,
-            );
-
-            setReadyForReviewCount(
-              0,
-            );
-          }
-        }
       }
 
       async function loadShared() {
         setProject(undefined);
 
         setSharedError(null);
-
-        setPendingReviewCount(
-          0,
-        );
-
-        setReadyForReviewCount(
-          0,
-        );
 
         try {
           const snapshot =
@@ -936,9 +561,6 @@ export default function ProjectScreen({
             snapshot.deltas,
           );
 
-          setProjectEvidence(
-            snapshot.evidence,
-          );
 
           try {
             const [remotePackages, remoteAssignments] =
@@ -991,15 +613,6 @@ export default function ProjectScreen({
           setSharedAssignments([]);
           setSharedProfileByUserId(new Map());
           setProjectDeltas([]);
-          setProjectEvidence([]);
-
-          setPendingReviewCount(
-            0,
-          );
-
-          setReadyForReviewCount(
-            0,
-          );
 
           if (
             error instanceof
@@ -1168,30 +781,6 @@ export default function ProjectScreen({
   /* Derived Project State                                                    */
   /* ------------------------------------------------------------------------ */
 
-  const recentMeasurements =
-    measurements
-      .slice(-3)
-      .reverse();
-
-  const deltaSummary =
-    summarizeDeltas(
-      projectDeltas,
-    );
-
-  const intelligencePulse =
-    buildProjectIntelligence({
-      measurements,
-      deltas:
-        projectDeltas,
-      evidence:
-        projectEvidence,
-      planItems:
-        plannedItems,
-    });
-
-  const latestMeasurement =
-    recentMeasurements[0];
-
   const sharedRoleLabel =
     membershipRole
       ? formatMembershipRoleLabel(
@@ -1243,6 +832,75 @@ export default function ProjectScreen({
       );
     };
 
+  const projectToolActions = !isShared && user?.uid
+    ? [
+        {
+          label: "Capture Field Data",
+          icon: "camera-outline" as const,
+          onPress: () => navigation.navigate("CaptureProject", { projectId }),
+        },
+        {
+          label: "Measurements",
+          icon: "resize-outline" as const,
+          onPress: () => navigation.navigate("ProjectMeasurements", { projectId }),
+        },
+        {
+          label: "Field Evidence",
+          icon: "images-outline" as const,
+          onPress: () => navigation.navigate("ProjectEvidence", { projectId }),
+        },
+        {
+          label: "Field Reports",
+          icon: "document-text-outline" as const,
+          onPress: () => navigation.navigate("ProjectFieldReports", { projectId }),
+        },
+        {
+          label: "Intelligence",
+          icon: "pulse-outline" as const,
+          onPress: () => navigation.navigate("ProjectIntelligence", { projectId }),
+        },
+        {
+          label: "Agent Activity",
+          icon: "hardware-chip-outline" as const,
+          onPress: () => navigation.navigate("ProjectAgentActivity", { projectId }),
+        },
+        {
+          label: "Manage Progress Data",
+          icon: "trending-up-outline" as const,
+          onPress: () => setProgressManagementVisible(true),
+        },
+      ]
+    : canSharedFieldCapture && sharedCaptureRole
+      ? [
+          {
+            label: "Capture Field Data",
+            icon: "camera-outline" as const,
+            onPress: () => navigation.navigate("SharedCapture", {
+              remoteProjectId: projectId,
+              membershipRole: sharedCaptureRole,
+            }),
+          },
+        ]
+      : [];
+
+  const closeProjectToolsAndRun = (action: () => void) => {
+    pendingProjectToolAction.current = action;
+    setProjectToolsVisible(false);
+    // Android does not invoke Modal.onDismiss consistently across supported
+    // React Native versions, so keep a short fallback after its close motion.
+    setTimeout(() => {
+      const pendingAction = pendingProjectToolAction.current;
+      pendingProjectToolAction.current = null;
+      pendingAction?.();
+    }, 350);
+  };
+
+  const runPendingProjectToolAction = () => {
+    const pendingAction = pendingProjectToolAction.current;
+    pendingProjectToolAction.current = null;
+    pendingAction?.();
+  };
+
   return (
     <SafeAreaView
       style={styles.safeArea}
@@ -1292,6 +950,25 @@ export default function ProjectScreen({
                   color={KEPLER_NAVY}
                 />
               </Pressable>
+
+              {projectToolActions.length > 0 ? (
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.headerIconButton,
+                    pressed && styles.glassButtonPressed,
+                  ]}
+                  onPress={() => setProjectToolsVisible(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Project tools"
+                  hitSlop={8}
+                >
+                  <Ionicons
+                    name="ellipsis-horizontal"
+                    size={21}
+                    color={KEPLER_NAVY}
+                  />
+                </Pressable>
+              ) : null}
 
               {!isShared ? (
                 <BlurView
@@ -1572,1143 +1249,12 @@ export default function ProjectScreen({
           />
         ) : null}
 
-        {/* --------------------------------------------------------------- */}
-        {/* PROJECT TAB CONTENT                                             */}
-        {/* --------------------------------------------------------------- */}
-
-        {activeTab ===
-        "project" ? (
-        <ScrollView
-          style={
-            styles.tabScroll
-          }
-          contentContainerStyle={
-            styles.content
-          }
-          showsVerticalScrollIndicator={
-            false
-          }
-        >
-        <View
-          style={
-            styles.projectTabContent
-          }
-        >
-          <View
-            style={
-              styles.overviewSurface
-            }
-          >
-            <View
-              style={
-                styles.overviewMetric
-              }
-            >
-              <Text
-                style={
-                  styles.smallLabel
-                }
-              >
-                PROGRESS
-              </Text>
-
-              <Text
-                style={
-                  styles.progressNumber
-                }
-              >
-                {project.progress}%
-              </Text>
-            </View>
-
-            <View
-              style={
-                styles.overviewDivider
-              }
-            />
-
-            <View
-              style={
-                styles.overviewMetric
-              }
-            >
-              <Text
-                style={
-                  styles.smallLabel
-                }
-              >
-                OPEN DELTAS
-              </Text>
-
-              <Text
-                style={
-                  styles.overviewDeltaNumber
-                }
-              >
-                {
-                  deltaSummary.openCount
-                }
-              </Text>
-            </View>
-
-            <View
-              style={
-                styles.overviewDivider
-              }
-            />
-
-            <View
-              style={
-                styles.overviewMetric
-              }
-            >
-              <Text
-                style={
-                  styles.smallLabel
-                }
-              >
-                TASKS
-              </Text>
-
-              <Text
-                style={
-                  styles.taskNumber
-                }
-              >
-                {
-                  project.assignedTasks
-                }
-              </Text>
-            </View>
-          </View>
-
-          {!isShared && user?.uid ? (
-            <Pressable
-              style={styles.progressManagementAction}
-              onPress={() => {
-                setProgressRemoteProjectId(undefined);
-                setProgressMappingFailed(false);
-                setProgressManagementVisible(true);
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Manage project progress data"
-            >
-              <View style={styles.progressManagementIcon}>
-                <Ionicons
-                  name="trending-up-outline"
-                  size={18}
-                  color={colors.brand.navy}
-                />
-              </View>
-              <View style={styles.progressManagementCopy}>
-                <Text style={styles.progressManagementTitle}>
-                  Project progress data
-                </Text>
-                <Text style={styles.progressManagementDescription}>
-                  Manage planned baseline and actual snapshots
-                </Text>
-              </View>
-              <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={colors.text.muted}
-              />
-            </Pressable>
-          ) : null}
-
-
-          <Text
-            style={
-              styles.sectionTitle
-            }
-          >
-            FIELD OPERATIONS
-          </Text>
-
-          {!isShared ? (
-            <>
-              {(pendingReviewCount >
-                0 ||
-                readyForReviewCount >
-                  0) ? (
-                <>
-                  <Text
-                    style={
-                      styles.attentionSectionTitle
-                    }
-                  >
-                    ATTENTION
-                  </Text>
-
-                  {pendingReviewCount >
-                  0 ? (
-                    <Pressable
-                      style={
-                        styles.attentionCard
-                      }
-                      onPress={() =>
-                        navigation.navigate(
-                          "ContributionReview",
-                          {
-                            projectId:
-                              project.id,
-                          },
-                        )
-                      }
-                      accessibilityRole="button"
-                      accessibilityLabel={`Needs review, ${pendingReviewCount} pending field submissions`}
-                    >
-                      <View
-                        style={
-                          styles.attentionCardHeader
-                        }
-                      >
-                        <View
-                          style={
-                            styles.attentionIconWrap
-                          }
-                        >
-                          <Ionicons
-                            name="alert-circle-outline"
-                            size={18}
-                            color={
-                              colors.danger
-                            }
-                          />
-                        </View>
-
-                        <Text
-                          style={
-                            styles.attentionEyebrow
-                          }
-                        >
-                          NEEDS REVIEW
-                        </Text>
-                      </View>
-
-                      <Text
-                        style={
-                          styles.attentionLine
-                        }
-                      >
-                        {
-                          pendingReviewCount
-                        }{" "}
-                        field
-                        submission
-                        {pendingReviewCount ===
-                        1
-                          ? ""
-                          : "s"}{" "}
-                        pending
-                      </Text>
-
-                      <Text
-                        style={
-                          styles.attentionCta
-                        }
-                      >
-                        Review
-                        submissions
-                      </Text>
-                    </Pressable>
-                  ) : null}
-
-                  {readyForReviewCount >
-                  0 ? (
-                    <Pressable
-                      style={
-                        styles.attentionCard
-                      }
-                      onPress={
-                        openWorkProgressTab
-                      }
-                      accessibilityRole="button"
-                      accessibilityLabel={`Work ready for review, ${readyForReviewCount} assignments`}
-                    >
-                      <View
-                        style={
-                          styles.attentionCardHeader
-                        }
-                      >
-                        <View
-                          style={
-                            styles.attentionIconWrap
-                          }
-                        >
-                          <Ionicons
-                            name="checkmark-circle-outline"
-                            size={18}
-                            color={
-                              NAVY
-                            }
-                          />
-                        </View>
-
-                        <Text
-                          style={
-                            styles.attentionEyebrow
-                          }
-                        >
-                          READY FOR
-                          REVIEW
-                        </Text>
-                      </View>
-
-                      <Text
-                        style={
-                          styles.attentionLine
-                        }
-                      >
-                        {
-                          readyForReviewCount
-                        }{" "}
-                        assignment
-                        {readyForReviewCount ===
-                        1
-                          ? ""
-                          : "s"}{" "}
-                        ready for
-                        owner review
-                      </Text>
-
-                      <Text
-                        style={
-                          styles.attentionCta
-                        }
-                      >
-                        Open Work
-                        Progress
-                      </Text>
-                    </Pressable>
-                  ) : null}
-                </>
-              ) : null}
-
-              {/*
-               * WORK PROGRESS and PROJECT TEAM
-               * cards were intentionally removed
-               * from the Project tab because they
-               * now live in the tab strip above.
-               */}
-
-              <Pressable
-                style={
-                  styles.primaryAction
-                }
-                onPress={() =>
-                  navigation.navigate(
-                    "CaptureProject",
-                    {
-                      projectId:
-                        project.id,
-                    },
-                  )
-                }
-                accessibilityRole="button"
-                accessibilityLabel="Capture field reality"
-              >
-                <View
-                  style={
-                    styles.primaryIconWrap
-                  }
-                >
-                  <Ionicons
-                    name="add"
-                    size={22}
-                    color={NAVY}
-                  />
-                </View>
-
-                <View
-                  style={
-                    styles.primaryContent
-                  }
-                >
-                  <Text
-                    style={
-                      styles.primaryTitle
-                    }
-                  >
-                    CAPTURE FIELD
-                    REALITY
-                  </Text>
-
-                  <Text
-                    style={
-                      styles.primaryDescription
-                    }
-                  >
-                    Record evidence
-                    from the jobsite
-                  </Text>
-                </View>
-
-                <Ionicons
-                  name="chevron-forward"
-                  size={18}
-                  color={
-                    colors.text.muted
-                  }
-                />
-              </Pressable>
-
-              <Text
-                style={
-                  styles.sectionTitle
-                }
-              >
-                PROJECT INSIGHTS
-              </Text>
-
-              <View
-                style={
-                  styles.navGroup
-                }
-              >
-                <ProjectNavRow
-                  iconName="pulse-outline"
-                  title="Field Intelligence"
-                  description={`${intelligencePulse.disposition.open} open delta${intelligencePulse.disposition.open === 1 ? "" : "s"} · ${intelligencePulse.evidence} evidence record${intelligencePulse.evidence === 1 ? "" : "s"}${latestMeasurement ? ` · Latest ${latestMeasurement.value.toFixed(2)} ${latestMeasurement.unit}` : " · No measurements yet"}`}
-                  onPress={() =>
-                    navigation.navigate(
-                      "ProjectIntelligence",
-                      {
-                        projectId:
-                          project.id,
-                      },
-                    )
-                  }
-                  accessibilityLabel="View field intelligence"
-                />
-
-                <ProjectNavRow
-                  iconName="document-text-outline"
-                  title="Field Reports"
-                  description="Build a read-only report from documented field activity."
-                  onPress={() =>
-                    navigation.navigate(
-                      "ProjectFieldReports",
-                      {
-                        projectId:
-                          project.id,
-                      },
-                    )
-                  }
-                  accessibilityLabel="View field reports"
-                />
-
-                <ProjectNavRow
-                  iconName="hardware-chip-outline"
-                  title="BuildSigma Intelligence"
-                  description="Field-variance analysis runs and summaries."
-                  onPress={() =>
-                    navigation.navigate(
-                      "ProjectAgentActivity",
-                      {
-                        projectId:
-                          project.id,
-                      },
-                    )
-                  }
-                  accessibilityLabel="View BuildSigma Intelligence"
-                />
-
-                <ProjectNavRow
-                  iconName="time-outline"
-                  title="Project Activity"
-                  description="Everything documented on this project."
-                  onPress={() =>
-                    navigation.navigate(
-                      "ProjectActivity",
-                      {
-                        projectId:
-                          project.id,
-                      },
-                    )
-                  }
-                  accessibilityLabel="View project activity"
-                  isLast
-                />
-              </View>
-            </>
-          ) : (
-            <View>
-              <View
-                style={
-                  styles.navGroup
-                }
-              >
-                <ProjectNavRow
-                  iconName="time-outline"
-                  title="Project Activity"
-                  description="Collaboration events for this project."
-                  onPress={() =>
-                    navigation.navigate(
-                      "ProjectActivity",
-                      {
-                        projectId:
-                          project.id,
-
-                        source:
-                          "shared",
-                      },
-                    )
-                  }
-                  accessibilityLabel="View project activity"
-                  isLast
-                />
-              </View>
-
-              <View
-                style={
-                  styles.contributionSummary
-                }
-              >
-                <Text
-                  style={
-                    styles.contributionEyebrow
-                  }
-                >
-                  {canSharedFieldCapture
-                    ? "FIELD CONTRIBUTION"
-                    : "READ ONLY"}
-                </Text>
-
-                <Text
-                  style={
-                    styles.contributionLine
-                  }
-                >
-                  {
-                    intelligencePulse
-                      .disposition
-                      .open
-                  }{" "}
-                  open delta
-                  {intelligencePulse
-                    .disposition
-                    .open === 1
-                    ? ""
-                    : "s"}
-                </Text>
-
-                <Text
-                  style={
-                    styles.contributionLine
-                  }
-                >
-                  {
-                    intelligencePulse
-                      .evidence
-                  }{" "}
-                  evidence record
-                  {intelligencePulse
-                    .evidence ===
-                  1
-                    ? ""
-                    : "s"}
-                </Text>
-
-                <Text
-                  style={
-                    styles.contributionMeta
-                  }
-                >
-                  {latestMeasurement
-                    ? `Latest measurement ${latestMeasurement.value.toFixed(
-                        2,
-                      )} ${latestMeasurement.unit}`
-                    : showAssignedScopeEmpty
-                      ? "No work has been assigned to you yet."
-                      : "No measurements yet"}
-                </Text>
-              </View>
-
-              {canSharedFieldCapture &&
-              sharedCaptureRole ? (
-                <Pressable
-                  style={
-                    styles.primaryAction
-                  }
-                  onPress={() =>
-                    navigation.navigate(
-                      "SharedCapture",
-                      {
-                        remoteProjectId:
-                          project.id,
-
-                        membershipRole:
-                          sharedCaptureRole,
-                      },
-                    )
-                  }
-                  accessibilityRole="button"
-                  accessibilityLabel="Capture shared field measurement"
-                >
-                  <View
-                    style={
-                      styles.primaryIconWrap
-                    }
-                  >
-                    <Ionicons
-                      name="add"
-                      size={22}
-                      color={NAVY}
-                    />
-                  </View>
-
-                  <View
-                    style={
-                      styles.primaryContent
-                    }
-                  >
-                    <Text
-                      style={
-                        styles.primaryTitle
-                      }
-                    >
-                      CAPTURE FIELD
-                      REALITY
-                    </Text>
-
-                    <Text
-                      style={
-                        styles.primaryDescription
-                      }
-                    >
-                      Record
-                      measurement
-                      for your
-                      assigned work
-                    </Text>
-                  </View>
-
-                  <Ionicons
-                    name="chevron-forward"
-                    size={18}
-                    color={
-                      colors.text.muted
-                    }
-                  />
-                </Pressable>
-              ) : null}
-            </View>
-          )}
-
-          {/* ------------------------------------------------------------- */}
-          {/* Existing Grid                                                */}
-          {/* ------------------------------------------------------------- */}
-
-          <View
-            style={styles.grid}
-          >
-            {isShared ? (
-              <>
-                <OperationalShortcut
-                  iconName="resize-outline"
-                  title="Measurements"
-                  description={`${measurements.length} recorded`}
-                />
-
-                <OperationalShortcut
-                  iconName="trending-up-outline"
-                  title="Progress"
-                  description={`${project.progress}% complete`}
-                />
-
-                <OperationalShortcut
-                  iconName="git-compare-outline"
-                  title="Deltas"
-                  description={`${deltaSummary.openCount} open`}
-                />
-
-                <OperationalShortcut
-                  iconName="images-outline"
-                  title="Field Evidence"
-                  description={`${projectEvidence.length} records`}
-                />
-              </>
-            ) : (
-              <>
-                <OperationalShortcut
-                  iconName="resize-outline"
-                  title="Measurements"
-                  description="Record field dimensions"
-                  onPress={() =>
-                    navigation.navigate(
-                      "ProjectMeasurements",
-                      {
-                        projectId:
-                          project.id,
-                      },
-                    )
-                  }
-                />
-
-                <OperationalShortcut
-                  iconName="trending-up-outline"
-                  title="Progress"
-                  description="Track installed quantities"
-                />
-
-                <OperationalShortcut
-                  iconName="git-compare-outline"
-                  title="Deltas"
-                  description="Review plan differences"
-                  onPress={() =>
-                    navigation.navigate(
-                      "ProjectDeltas",
-                      {
-                        projectId:
-                          project.id,
-                      },
-                    )
-                  }
-                />
-
-                <OperationalShortcut
-                  iconName="images-outline"
-                  title="Field Evidence"
-                  description="Photos & notes"
-                  onPress={() =>
-                    navigation.navigate(
-                      "ProjectEvidence",
-                      {
-                        projectId:
-                          project.id,
-                      },
-                    )
-                  }
-                />
-              </>
-            )}
-          </View>
-
-         
-          <WorkPackagesSection
-            mode={
-              isShared
-                ? "remote"
-                : "local"
-            }
-            projectId={
-              project.id
-            }
-            ownerUid={
-              isShared
-                ? undefined
-                : user?.uid
-            }
-            canMutate={
-              !isShared &&
-              !!user?.uid
-            }
-            membershipRole={
-              isShared
-                ? membershipRole
-                : undefined
-            }
-            currentUserId={
-              isShared
-                ? user?.uid
-                : undefined
-            }
-            planItems={plannedItems.map(
-              (item) => ({
-                id: item.id,
-                label:
-                  item.label,
-              }),
-            )}
+        {activeTab === "project" ? (
+          <ProjectActivityContent
+            projectId={project.id}
+            source={isShared ? "shared" : "local"}
+            embedded
           />
-
-          {/* ------------------------------------------------------------- */}
-          {/* Delta Summary                                                */}
-          {/* ------------------------------------------------------------- */}
-
-          <Text
-            style={
-              styles.sectionTitle
-            }
-          >
-            DELTA SUMMARY
-          </Text>
-
-          {projectDeltas.length ===
-          0 ? (
-            <Text
-              style={
-                styles.emptyMeasurements
-              }
-            >
-              {showAssignedScopeEmpty
-                ? "No work has been assigned to you yet."
-                : "No plan-vs-reality differences recorded yet."}
-            </Text>
-          ) : (
-            <View
-              style={
-                styles.deltaSummaryCard
-              }
-            >
-              <View
-                style={
-                  styles.deltaSummaryRow
-                }
-              >
-                <Text
-                  style={
-                    styles.smallLabel
-                  }
-                >
-                  OPEN
-                </Text>
-
-                <Text
-                  style={
-                    styles.deltaSummaryValue
-                  }
-                >
-                  {
-                    deltaSummary.openCount
-                  }
-                </Text>
-              </View>
-
-              <View
-                style={
-                  styles.deltaSummaryRow
-                }
-              >
-                <Text
-                  style={
-                    styles.smallLabel
-                  }
-                >
-                  ACCEPTED
-                </Text>
-
-                <Text
-                  style={
-                    styles.deltaSummaryValue
-                  }
-                >
-                  {
-                    deltaSummary.acceptedCount
-                  }
-                </Text>
-              </View>
-
-              <View
-                style={
-                  styles.deltaSummaryRow
-                }
-              >
-                <Text
-                  style={
-                    styles.smallLabel
-                  }
-                >
-                  COST IMPACT
-                </Text>
-
-                <Text
-                  style={
-                    styles.deltaSummaryValue
-                  }
-                >
-                  {formatSignedCurrency(
-                    deltaSummary.totalCostImpact,
-                  )}
-                </Text>
-              </View>
-
-              <View
-                style={
-                  styles.deltaSummaryRow
-                }
-              >
-                <Text
-                  style={
-                    styles.smallLabel
-                  }
-                >
-                  SCHEDULE
-                  IMPACT
-                </Text>
-
-                <Text
-                  style={
-                    styles.deltaSummaryValue
-                  }
-                >
-                  {formatSignedDays(
-                    deltaSummary.totalScheduleImpactDays,
-                  )}
-                </Text>
-              </View>
-
-              <View
-                style={[
-                  styles.deltaSummaryRow,
-                  styles.deltaSummaryRowLast,
-                ]}
-              >
-                <Text
-                  style={
-                    styles.smallLabel
-                  }
-                >
-                  LABOR IMPACT
-                </Text>
-
-                <Text
-                  style={
-                    styles.deltaSummaryValue
-                  }
-                >
-                  {formatSignedHours(
-                    deltaSummary.totalLaborImpactHours,
-                  )}
-                </Text>
-              </View>
-            </View>
-          )}
-
-          {/* ------------------------------------------------------------- */}
-          {/* Recent Measurements                                          */}
-          {/* ------------------------------------------------------------- */}
-
-          <Text
-            style={
-              styles.sectionTitle
-            }
-          >
-            RECENT MEASUREMENTS
-          </Text>
-
-          {recentMeasurements.length ===
-          0 ? (
-            <Text
-              style={
-                styles.emptyMeasurements
-              }
-            >
-              {showAssignedScopeEmpty
-                ? "No work has been assigned to you yet."
-                : "No field measurements recorded yet."}
-            </Text>
-          ) : (
-            recentMeasurements.map(
-              (
-                measurement,
-              ) => {
-                const planItem =
-                  plannedItems.find(
-                    (item) =>
-                      item.id ===
-                      measurement.planItemId,
-                  );
-
-                const unitsMatch =
-                  !!planItem &&
-                  planItem.unit ===
-                    measurement.unit;
-
-                const difference =
-                  unitsMatch
-                    ? calculateDifference(
-                        planItem.plannedValue,
-                        measurement.value,
-                      )
-                    : null;
-
-                const percentDifference =
-                  unitsMatch
-                    ? calculatePercentDifference(
-                        planItem.plannedValue,
-                        measurement.value,
-                      )
-                    : null;
-
-                return (
-                  <Pressable
-                    key={
-                      measurement.id
-                    }
-                    style={
-                      styles.measurementCard
-                    }
-                    onPress={
-                      isShared
-                        ? undefined
-                        : () =>
-                            navigation.navigate(
-                              "MeasurementDetail",
-                              {
-                                measurementId:
-                                  measurement.id,
-                              },
-                            )
-                    }
-                    disabled={
-                      isShared
-                    }
-                  >
-                    <View
-                      style={
-                        styles.measurementCardTop
-                      }
-                    >
-                      <Text
-                        style={[
-                          styles.measurementLabel,
-                          styles.measurementLabelFlex,
-                        ]}
-                      >
-                        {
-                          measurement.label
-                        }
-                      </Text>
-
-                      {isShared ? (
-                        <Text
-                          style={[
-                            styles.reviewStatusChip,
-                            {
-                              color:
-                                measurementReviewStatusColor(
-                                  measurement.reviewStatus,
-                                ),
-                            },
-                          ]}
-                          accessibilityLabel={formatSubmissionReviewStatusLabel(
-                            measurement.reviewStatus,
-                          )}
-                        >
-                          {formatSubmissionReviewStatusLabel(
-                            measurement.reviewStatus,
-                          )}
-                        </Text>
-                      ) : null}
-                    </View>
-
-                    {planItem ? (
-                      <Text
-                        style={
-                          styles.comparisonLine
-                        }
-                      >
-                        Planned:{" "}
-                        {formatPlannedValue(
-                          planItem.plannedValue,
-                          planItem.unit,
-                        )}
-                      </Text>
-                    ) : (
-                      <Text
-                        style={
-                          styles.comparisonLine
-                        }
-                      >
-                        Planned:
-                        unavailable
-                      </Text>
-                    )}
-
-                    <Text
-                      style={
-                        styles.comparisonLine
-                      }
-                    >
-                      Field:{" "}
-                      {measurement.value.toFixed(
-                        2,
-                      )}{" "}
-                      {
-                        measurement.unit
-                      }
-                    </Text>
-
-                    {planItem &&
-                    unitsMatch &&
-                    difference !==
-                      null ? (
-                      <>
-                        <Text
-                          style={
-                            styles.comparisonLine
-                          }
-                        >
-                          Difference:{" "}
-                          {formatSignedValue(
-                            difference,
-                            measurement.unit,
-                          )}
-                        </Text>
-
-                        <Text
-                          style={
-                            styles.comparisonLine
-                          }
-                        >
-                          Difference:{" "}
-                          {percentDifference ===
-                          null
-                            ? "n/a"
-                            : formatSignedPercent(
-                                percentDifference,
-                              )}
-                        </Text>
-                      </>
-                    ) : (
-                      <Text
-                        style={
-                          styles.comparisonLine
-                        }
-                      >
-                        {planItem
-                          ? "Comparison unavailable (unit mismatch)"
-                          : "Comparison unavailable"}
-                      </Text>
-                    )}
-
-                    {isShared &&
-                    effectiveMeasurementReviewStatus(
-                      measurement.reviewStatus,
-                    ) ===
-                      "rejected" &&
-                    measurement.reviewNote?.trim() ? (
-                      <View
-                        style={
-                          styles.rejectionNoteBlock
-                        }
-                      >
-                        <Text
-                          style={
-                            styles.rejectionNoteLabel
-                          }
-                        >
-                          Owner feedback
-                        </Text>
-
-                        <Text
-                          style={
-                            styles.rejectionNoteText
-                          }
-                        >
-                          {measurement.reviewNote.trim()}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </Pressable>
-                );
-              },
-            )
-          )}
-        </View>
-      </ScrollView>
         ) : null}
       </View>
       {!isShared && user?.uid ? (
@@ -2719,6 +1265,61 @@ export default function ProjectScreen({
           onClose={() => setProgressManagementVisible(false)}
         />
       ) : null}
+
+      <Modal
+        visible={projectToolsVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setProjectToolsVisible(false)}
+        onDismiss={runPendingProjectToolAction}
+      >
+        <Pressable
+          style={styles.projectToolsBackdrop}
+          onPress={() => setProjectToolsVisible(false)}
+          accessible={false}
+        >
+          <Pressable
+            style={styles.projectToolsSheet}
+            onPress={(event) => event.stopPropagation()}
+            accessible={false}
+          >
+            <View style={styles.projectToolsHeader}>
+              <Text style={styles.projectToolsTitle}>Project Tools</Text>
+              <Pressable
+                onPress={() => setProjectToolsVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close project tools"
+                hitSlop={8}
+              >
+                <Ionicons name="close" size={22} color={colors.text.secondary} />
+              </Pressable>
+            </View>
+            <ScrollView
+              style={styles.projectToolsList}
+              showsVerticalScrollIndicator={false}
+            >
+              {projectToolActions.map((action) => (
+                <Pressable
+                  key={action.label}
+                  style={({ pressed }) => [
+                    styles.projectToolsRow,
+                    pressed && styles.projectToolsRowPressed,
+                  ]}
+                  onPress={() => {
+                    closeProjectToolsAndRun(action.onPress);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={action.label}
+                >
+                  <Ionicons name={action.icon} size={19} color={KEPLER_NAVY} />
+                  <Text style={styles.projectToolsRowText}>{action.label}</Text>
+                  <Ionicons name="chevron-forward" size={17} color={colors.text.muted} />
+                </Pressable>
+              ))}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -2798,6 +1399,61 @@ const styles =
       height: 36,
       alignItems: "center",
       justifyContent: "center",
+    },
+
+    projectToolsBackdrop: {
+      flex: 1,
+      justifyContent: "flex-end",
+      backgroundColor: "rgba(15,23,42,0.28)",
+      paddingHorizontal: 16,
+      paddingBottom: 24,
+    },
+
+    projectToolsSheet: {
+      maxHeight: "78%",
+      borderRadius: 18,
+      overflow: "hidden",
+      backgroundColor: colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      paddingHorizontal: 16,
+      paddingTop: 16,
+    },
+
+    projectToolsHeader: {
+      minHeight: 36,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 6,
+    },
+
+    projectToolsTitle: {
+      ...typography.title,
+      color: colors.text.primary,
+    },
+
+    projectToolsList: {
+      flexGrow: 0,
+    },
+
+    projectToolsRow: {
+      minHeight: 52,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+    },
+
+    projectToolsRowPressed: {
+      opacity: 0.68,
+    },
+
+    projectToolsRowText: {
+      ...typography.bodyMedium,
+      color: colors.text.primary,
+      flex: 1,
     },
 
     projectIdentity: {

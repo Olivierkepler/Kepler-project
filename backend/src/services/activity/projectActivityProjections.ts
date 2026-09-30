@@ -13,6 +13,7 @@ import type { WorkPackageAssignmentStatus } from "../../domain/workPackageAssign
 import type { TeamWorkPackageAssignment } from "../../domain/teamWorkPackageAssignment.js";
 import type { Team } from "../../domain/team.js";
 import { tryRecordActivityAndNotifications } from "./recordActivityEvent.js";
+import { buildEvidenceCreatedActivity } from "./evidenceActivityProjection.js";
 import type { ActivityNotificationPolicyContext } from "./activityNotificationPolicy.js";
 
 function nowOr(value?: string): string {
@@ -228,6 +229,20 @@ export async function projectMeasurementSubmittedActivity(input: {
     createdAt: nowOr(m.createdAt),
   };
 
+  await tryRecordActivityAndNotifications(activity, {
+    projectOwnerUid: input.projectOwnerUid,
+  });
+}
+
+export async function projectEvidenceCreatedActivity(input: {
+  evidence: import("../../domain/evidence.js").Evidence;
+  actorUid: string;
+  projectOwnerUid: string;
+  measurement?: Measurement;
+  delta?: Delta;
+  deltaMeasurement?: Measurement;
+}): Promise<void> {
+  const activity = buildEvidenceCreatedActivity(input);
   await tryRecordActivityAndNotifications(activity, {
     projectOwnerUid: input.projectOwnerUid,
   });

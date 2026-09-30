@@ -64,6 +64,8 @@ export function formatCloudActivityTitle(type: string): string {
       return "Invitation accepted";
     case "member_removed":
       return "Member removed";
+    case "evidence_created":
+      return "Field evidence added";
     default:
       return "Project update";
   }

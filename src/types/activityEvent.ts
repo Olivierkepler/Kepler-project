@@ -23,6 +23,7 @@ export type ActivitySourceType =
   | "assignment_create"
   | "team_assignment_create"
   | "team_assignment_remove"
+  | "evidence_create"
   | "delta_create"
   | "invitation_create"
   | "invitation_accept"
@@ -50,7 +51,8 @@ export type ActivityEventType =
   | "invitation_accepted"
   | "member_removed"
   | "team_assignment_created"
-  | "team_assignment_removed";
+  | "team_assignment_removed"
+  | "evidence_created";
 
 export const ACTIVITY_EVENT_TYPES: readonly ActivityEventType[] = [
   "assignment_created",
@@ -74,6 +76,7 @@ export const ACTIVITY_EVENT_TYPES: readonly ActivityEventType[] = [
   "member_removed",
   "team_assignment_created",
   "team_assignment_removed",
+  "evidence_created",
 ] as const;
 
 export type ActivityRelatedRefs = {

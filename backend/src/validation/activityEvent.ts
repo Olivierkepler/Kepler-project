@@ -38,6 +38,7 @@ const SOURCE_TYPES: ReadonlySet<string> = new Set([
   "assignment_create",
   "team_assignment_create",
   "team_assignment_remove",
+  "evidence_create",
   "delta_create",
   "invitation_create",
   "invitation_accept",

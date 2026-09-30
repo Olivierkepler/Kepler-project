@@ -10,7 +10,10 @@ import {
   deleteEvidenceById,
 } from "../repositories/evidenceRepository.js";
 import { getDeltasForProject } from "../repositories/deltasRepository.js";
-import { getMeasurementsForProject } from "../repositories/measurementsRepository.js";
+import {
+  getMeasurementById,
+  getMeasurementsForProject,
+} from "../repositories/measurementsRepository.js";
 import { getProjectById } from "../repositories/projectsRepository.js";
 import {
   buildEvidenceObjectPath,
@@ -38,8 +41,52 @@ import {
   assertDeltaLinkedFieldWritableByUser,
   assertMeasurementLinkedFieldWritableByUser,
 } from "../services/collaboration/projectFieldWriteAccess.js";
+import { projectEvidenceCreatedActivity } from "../services/activity/projectActivityProjections.js";
 
 export const evidenceRouter = Router();
+
+async function recordEvidenceActivityBestEffort(
+  evidence: Evidence,
+  actorUid: string,
+  projectOwnerUid: string,
+): Promise<void> {
+  try {
+    let measurement = undefined;
+    let delta = undefined;
+    let deltaMeasurement = undefined;
+
+    if (evidence.localMeasurementId) {
+      const measurements = await getMeasurementsForProject(evidence.projectId);
+      measurement = measurements.find(
+        (item) => item.localMeasurementId === evidence.localMeasurementId,
+      );
+    } else if (evidence.localDeltaId) {
+      const deltas = await getDeltasForProject(evidence.projectId);
+      delta = deltas.find((item) => item.localDeltaId === evidence.localDeltaId);
+      if (delta) {
+        deltaMeasurement = await getMeasurementById(delta.measurementId);
+      }
+    }
+
+    await projectEvidenceCreatedActivity({
+      evidence,
+      actorUid,
+      projectOwnerUid,
+      ...(measurement ? { measurement } : {}),
+      ...(delta ? { delta } : {}),
+      ...(deltaMeasurement ? { deltaMeasurement } : {}),
+    });
+  } catch {
+    // Evidence is already durable; a projection failure must not undo it.
+    console.error(
+      JSON.stringify({
+        event: "evidence_activity_projection_resolution_failed",
+        projectId: evidence.projectId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+}
 
 function toEvidenceListItem(evidence: Evidence) {
   return {
@@ -399,6 +446,8 @@ evidenceRouter.post("/projects/:projectId/evidence", async (req, res) => {
     };
 
     await setEvidence(evidence);
+
+    await recordEvidenceActivityBestEffort(evidence, uid, project.ownerUid);
 
     // A5: resume waiting Field Variance only for genuine NEW Delta Evidence.
     // Enqueue failures must not fail Evidence creation or mutate Evidence.
