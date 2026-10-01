@@ -21,6 +21,7 @@ export type ProjectTodoKindFilter = ProjectTodoKind | "all";
 export type ProjectTodoItem = {
   id: string;
   kind: ProjectTodoKind;
+  sourceType: "work_package" | "plan_item" | "assignment" | "measurement";
   title: string;
   context: string;
   reason: string;
@@ -28,6 +29,8 @@ export type ProjectTodoItem = {
   workPackageId?: string;
   /** All canonical package paths containing this item, when there is more than one. */
   workPackageIds?: string[];
+  assignmentId?: string;
+  measurementId?: string;
 };
 
 export type ProjectTodoInput = {
@@ -63,7 +66,7 @@ export function deriveProjectTodos(input: ProjectTodoInput): ProjectTodoItem[] {
   const conditionKeys = new Set<string>();
   const push = (item: ProjectTodoItem) => {
     const conditionKey = item.kind === "ready_for_review"
-      ? `${item.kind}:${item.planItemId}`
+      ? `${item.kind}:${item.sourceType}:${item.assignmentId ?? item.measurementId ?? item.id}`
       : item.id;
     if (conditionKeys.has(conditionKey)) return;
     conditionKeys.add(conditionKey);
@@ -102,6 +105,7 @@ export function deriveProjectTodos(input: ProjectTodoInput): ProjectTodoItem[] {
         push({
           id: `needs_assignment:plan_item:${item.id}`,
           kind: "needs_assignment",
+          sourceType: "plan_item",
           title: item.label,
           context: "Not in a work package",
           reason: "Needs assignment",
@@ -124,6 +128,7 @@ export function deriveProjectTodos(input: ProjectTodoInput): ProjectTodoItem[] {
       push({
         id: `needs_assignment:work_package:${workPackage.id}`,
         kind: "needs_assignment",
+        sourceType: "work_package",
         title: workPackage.name,
         context: `${items.length} ${items.length === 1 ? "Plan Item" : "Plan Items"}`,
         reason: "Needs assignment",
@@ -143,12 +148,14 @@ export function deriveProjectTodos(input: ProjectTodoInput): ProjectTodoItem[] {
     push({
       id: `ready_for_review:assignment:${assignment.id}`,
       kind: "ready_for_review",
+      sourceType: "assignment",
       title: workPackage.name,
       context: planItem.label,
       reason: "Ready for review",
       planItemId: planItem.id,
       workPackageId: workPackage.id,
       workPackageIds: [workPackage.id],
+      assignmentId: assignment.id,
     });
   }
 
@@ -161,6 +168,7 @@ export function deriveProjectTodos(input: ProjectTodoInput): ProjectTodoItem[] {
         push({
           id: `ready_for_review:measurement:${measurement.id}`,
           kind: "ready_for_review",
+          sourceType: "measurement",
           title: planItem.label,
           context: workPackage?.name ?? "Unassigned",
           reason: "Ready for review",
@@ -169,17 +177,20 @@ export function deriveProjectTodos(input: ProjectTodoInput): ProjectTodoItem[] {
           ...(workPackage
             ? { workPackageIds: packageIdsByPlanItemId.get(planItem.id) ?? [workPackage.id] }
             : {}),
+          measurementId: measurement.id,
         });
       } else if (reviewStatus === "rejected") {
         push({
           id: `needs_correction:measurement:${measurement.id}`,
           kind: "needs_correction",
+          sourceType: "measurement",
           title: planItem.label,
           context: workPackage?.name ?? "Unassigned",
           reason: "Needs correction",
           planItemId: planItem.id,
           ...(workPackage ? { workPackageId: workPackage.id } : {}),
           ...(workPackage ? { workPackageIds: packageIdsByPlanItemId.get(planItem.id) ?? [workPackage.id] } : {}),
+          measurementId: measurement.id,
         });
       }
       continue;
@@ -190,6 +201,7 @@ export function deriveProjectTodos(input: ProjectTodoInput): ProjectTodoItem[] {
       push({
         id: `awaiting_measurement:plan_item:${planItem.id}`,
         kind: "awaiting_measurement",
+        sourceType: "plan_item",
         title: planItem.label,
         context: workPackage?.name ?? "Unassigned",
         reason: "Awaiting field measurement",

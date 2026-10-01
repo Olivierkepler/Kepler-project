@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAuth } from "../../auth/AuthProvider";
 import { getRemoteProjectId } from "../../store/projectCloudMappings";
@@ -28,12 +29,17 @@ import {
   type ProjectTodoScope,
 } from "../../utils/domain/projectTodos";
 import { colors, typography } from "../../theme/colors";
+import OrganizeWorkModal from "./OrganizeWorkModal";
+import WorkPackagesSection from "./WorkPackagesSection";
 
 type Props = {
   projectId: string;
   isShared: boolean;
   membershipRole?: ProjectMemberRole;
   onOpenPlanItem: (planItemId: string) => void;
+  onMeasurePlanItem?: (planItemId: string) => void;
+  onOpenMeasurementReview?: (planItemId: string) => void;
+  onOpenAssignmentReview?: (workPackageId: string, fallbackPlanItemId: string) => void;
   sharedPlanItems?: PlanItem[];
   sharedMeasurements?: Measurement[];
   sharedWorkPackages?: WorkPackage[];
@@ -88,6 +94,9 @@ export default function ProjectTodoContent({
   isShared,
   membershipRole,
   onOpenPlanItem,
+  onMeasurePlanItem,
+  onOpenMeasurementReview,
+  onOpenAssignmentReview,
   sharedPlanItems = EMPTY_PLAN_ITEMS,
   sharedMeasurements = EMPTY_MEASUREMENTS,
   sharedWorkPackages = EMPTY_WORK_PACKAGES,
@@ -116,9 +125,17 @@ export default function ProjectTodoContent({
   );
   const [selectedKind, setSelectedKind] = useState<ProjectTodoKindFilter>("all");
   const [kindFilterVisible, setKindFilterVisible] = useState(false);
+  const [assignmentWorkPackageId, setAssignmentWorkPackageId] = useState<string | null>(null);
+  const [organizePlanItem, setOrganizePlanItem] = useState<PlanItem | null>(null);
+  const focusedBefore = useRef(false);
 
   const canManageAssignments = !isShared || membershipRole === "owner" || membershipRole === "project_admin";
   const canReview = !isShared || membershipRole === "owner" || membershipRole === "project_admin";
+
+  useFocusEffect(useCallback(() => {
+    if (focusedBefore.current) setRetryKey((current) => current + 1);
+    focusedBefore.current = true;
+  }, []));
 
   const loadLocal = useCallback(async (isCurrent: () => boolean) => {
     if (!user?.uid) {
@@ -376,11 +393,34 @@ export default function ProjectTodoContent({
               key={item.id}
               style={({ pressed }) => [styles.row, index === 0 && styles.firstRow, pressed && styles.rowPressed]}
               onPress={() => {
-                if (item.id.startsWith("ready_for_review:assignment:") && item.workPackageId && onOpenWorkPackage) {
-                  onOpenWorkPackage(item.workPackageId, item.planItemId);
-                } else {
-                  onOpenPlanItem(item.planItemId);
+                if (item.kind === "needs_assignment" && item.sourceType === "work_package" && item.workPackageId) {
+                  if (!isShared && user?.uid) setAssignmentWorkPackageId(item.workPackageId);
+                  else onOpenPlanItem(item.planItemId);
+                  return;
                 }
+                if (item.kind === "needs_assignment" && item.sourceType === "plan_item") {
+                  if (!isShared) {
+                    const target = localPlanItems.find((planItem) => planItem.id === item.planItemId);
+                    if (target) setOrganizePlanItem(target);
+                    else onOpenPlanItem(item.planItemId);
+                  } else onOpenPlanItem(item.planItemId);
+                  return;
+                }
+                if (item.kind === "awaiting_measurement" || item.kind === "needs_correction") {
+                  if (onMeasurePlanItem) onMeasurePlanItem(item.planItemId);
+                  else onOpenPlanItem(item.planItemId);
+                  return;
+                }
+                if (item.kind === "ready_for_review" && item.sourceType === "assignment" && item.workPackageId) {
+                  (onOpenAssignmentReview ?? onOpenWorkPackage)?.(item.workPackageId, item.planItemId);
+                  return;
+                }
+                if (item.kind === "ready_for_review" && item.sourceType === "measurement") {
+                  if (onOpenMeasurementReview) onOpenMeasurementReview(item.planItemId);
+                  else onOpenPlanItem(item.planItemId);
+                  return;
+                }
+                onOpenPlanItem(item.planItemId);
               }}
               accessibilityRole="button"
               accessibilityLabel={`${item.title}. ${item.context}. ${item.reason}. Open related work.`}
@@ -427,6 +467,40 @@ export default function ProjectTodoContent({
           </View>
         </View>
       </Modal>
+
+      {assignmentWorkPackageId && user?.uid && !isShared ? (
+        <WorkPackagesSection
+          mode="local"
+          projectId={projectId}
+          ownerUid={user.uid}
+          canMutate
+          planItems={localPlanItems.map(({ id, label }) => ({ id, label }))}
+          assignmentOnly
+          openAssignmentForWorkPackageId={assignmentWorkPackageId}
+          onAssignmentModalClose={() => {
+            setAssignmentWorkPackageId(null);
+            setRetryKey((current) => current + 1);
+          }}
+          onAssignmentsChanged={() => setRetryKey((current) => current + 1)}
+        />
+      ) : null}
+
+      {organizePlanItem && user?.uid && !isShared ? (
+        <OrganizeWorkModal
+          visible
+          projectId={projectId}
+          ownerUid={user.uid}
+          canMutate
+          planItems={[organizePlanItem]}
+          selectionMode="unassignedItemsFirst"
+          highlightPlanItemId={organizePlanItem.id}
+          onClose={() => {
+            setOrganizePlanItem(null);
+            setRetryKey((current) => current + 1);
+          }}
+          onUpdated={() => setRetryKey((current) => current + 1)}
+        />
+      ) : null}
     </ScrollView>
   );
 }

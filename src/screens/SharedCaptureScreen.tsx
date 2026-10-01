@@ -61,7 +61,7 @@ function mapContributionError(error: unknown): string {
 
 export default function SharedCaptureScreen({ route, navigation }: Props) {
   const { user } = useAuth();
-  const { remoteProjectId, membershipRole } = route.params;
+  const { remoteProjectId, membershipRole, planItemId: requestedPlanItemId } = route.params;
 
   const [planItems, setPlanItems] = useState<RemotePlanItem[]>([]);
   const [projectName, setProjectName] = useState<string | null>(null);
@@ -151,6 +151,14 @@ export default function SharedCaptureScreen({ route, navigation }: Props) {
   );
 
   useEffect(() => {
+    if (requestedPlanItemId) {
+      setSelectedPlanItemId(
+        eligiblePlanItems.some((item) => item.id === requestedPlanItemId)
+          ? requestedPlanItemId
+          : null,
+      );
+      return;
+    }
     if (eligiblePlanItems.length === 1) {
       setSelectedPlanItemId(eligiblePlanItems[0].id);
       return;
@@ -165,7 +173,7 @@ export default function SharedCaptureScreen({ route, navigation }: Props) {
       }
       return null;
     });
-  }, [eligiblePlanItems]);
+  }, [eligiblePlanItems, requestedPlanItemId]);
 
   const selectedPlanItem = selectedPlanItemId
     ? eligiblePlanItems.find((item) => item.id === selectedPlanItemId)

@@ -47,8 +47,10 @@ const base = {
 
 const unassigned = deriveProjectTodos(base);
 assert(unassigned.some((item) => item.id === "needs_assignment:work_package:wp-1"), "unassigned package produces one assignment action");
+assert(unassigned.find((item) => item.id === "needs_assignment:work_package:wp-1")?.workPackageId === "wp-1", "Work Package assignment action preserves package identity");
 assert(unassigned.filter((item) => item.id === "needs_assignment:work_package:wp-1").length === 1, "duplicate source Plan Item ids do not duplicate package action");
 assert(unassigned.some((item) => item.id === "needs_assignment:plan_item:plan-2"), "ungrouped Plan Item needs assignment");
+assert(unassigned.find((item) => item.id === "needs_assignment:plan_item:plan-2")?.sourceType === "plan_item", "ungrouped assignment remains Plan Item scoped");
 assert(!unassigned.some((item) => item.id === "awaiting_measurement:plan_item:plan-count"), "unsupported count measurement is not inferred");
 
 const assigned = deriveProjectTodos({ ...base, memberAssignments: [memberAssignment] });
@@ -57,26 +59,29 @@ const teamAssigned = deriveProjectTodos({ ...base, teamAssignments: [teamAssignm
 assert(!teamAssigned.some((item) => item.id === "needs_assignment:work_package:wp-1"), "Team assigned package has no needs-assignment action");
 
 const awaiting = deriveProjectTodos({ ...base, planItems: [lengthItem], workPackages: [], measurements: [] });
-assert(awaiting.some((item) => item.kind === "awaiting_measurement"), "measurable item without measurement awaits field measurement");
+assert(awaiting.some((item) => item.kind === "awaiting_measurement" && item.planItemId === lengthItem.id && item.sourceType === "plan_item"), "measurement action preserves Plan Item context");
 const resolved = deriveProjectTodos({ ...base, planItems: [lengthItem], workPackages: [], measurements: [measurement("accepted", "accepted")] });
 assert(!resolved.some((item) => item.kind === "awaiting_measurement"), "accepted measurement resolves awaiting action");
 const legacyResolved = deriveProjectTodos({ ...base, planItems: [lengthItem], workPackages: [], measurements: [measurement("legacy")] });
 assert(!legacyResolved.some((item) => item.kind === "awaiting_measurement"), "legacy measurement with no review status is accepted");
 
 const pending = deriveProjectTodos({ ...base, planItems: [lengthItem], workPackages: [], measurements: [measurement("pending", "pending")] });
-assert(pending.some((item) => item.kind === "ready_for_review"), "pending measurement is ready for review");
+assert(pending.some((item) => item.kind === "ready_for_review" && item.sourceType === "measurement" && item.measurementId === "pending"), "pending measurement review preserves source identity");
 const correction = deriveProjectTodos({ ...base, planItems: [lengthItem], workPackages: [], measurements: [measurement("rejected", "rejected")] });
-assert(correction.some((item) => item.kind === "needs_correction"), "rejected latest measurement needs correction");
+assert(correction.some((item) => item.kind === "needs_correction" && item.sourceType === "measurement" && item.measurementId === "rejected"), "rejected latest measurement preserves correction source identity");
 
 const readyAssignment: WorkPackageAssignment = { ...memberAssignment, id: "ready", status: "ready_for_review" };
 const review = deriveProjectTodos({ ...base, memberAssignments: [readyAssignment] });
-assert(review.some((item) => item.kind === "ready_for_review" && item.workPackageId === "wp-1"), "explicit assignment review state is represented");
+assert(review.some((item) => item.kind === "ready_for_review" && item.sourceType === "assignment" && item.assignmentId === "ready" && item.workPackageId === "wp-1"), "explicit assignment review state is distinguishable from measurement review");
 const combinedReview = deriveProjectTodos({
   ...base,
   memberAssignments: [readyAssignment],
   measurements: [measurement("pending", "pending")],
 });
-assert(combinedReview.filter((item) => item.kind === "ready_for_review" && item.planItemId === lengthItem.id).length === 1, "assignment and measurement paths do not duplicate one Plan Item review condition");
+assert(combinedReview.filter((item) => item.kind === "ready_for_review" && item.planItemId === lengthItem.id).length === 2, "assignment and measurement review remain separate workflows for one Plan Item");
+assert(combinedReview.some((item) => item.sourceType === "assignment") && combinedReview.some((item) => item.sourceType === "measurement"), "both review source types remain identifiable");
+const duplicateAssignmentReview = deriveProjectTodos({ ...base, memberAssignments: [readyAssignment, readyAssignment] });
+assert(duplicateAssignmentReview.filter((item) => item.kind === "ready_for_review").length === 1, "duplicate records for the same assignment review are deduplicated");
 
 const ordered = deriveProjectTodos({
   ...base,
@@ -97,6 +102,7 @@ assert(!noReviewPermission.some((item) => item.kind === "ready_for_review"), "re
 const actionable: ProjectTodoItem = {
   id: "awaiting_measurement:plan_item:plan-1",
   kind: "awaiting_measurement",
+  sourceType: "plan_item",
   title: "Ceiling Fan",
   context: "Electrical",
   reason: "Awaiting field measurement",

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -108,6 +108,11 @@ type Props = {
    * remote assignment for Phase 2K.2 self-service progress.
    */
   currentUserId?: string;
+  /** Mount as a controller for the existing assignment modal only. */
+  assignmentOnly?: boolean;
+  openAssignmentForWorkPackageId?: string | null;
+  onAssignmentModalClose?: () => void;
+  onAssignmentsChanged?: () => void;
 };
 
 function isAssignedScopeRole(role: ProjectMemberRole | undefined): boolean {
@@ -161,6 +166,10 @@ export default function WorkPackagesSection({
   planItems,
   membershipRole,
   currentUserId,
+  assignmentOnly = false,
+  openAssignmentForWorkPackageId = null,
+  onAssignmentModalClose,
+  onAssignmentsChanged,
 }: Props) {
   const [items, setItems] = useState<WorkPackageView[]>([]);
   const [assignments, setAssignments] = useState<AssignmentView[]>([]);
@@ -356,6 +365,12 @@ export default function WorkPackagesSection({
       };
     }, [reload, retryToken]),
   );
+
+  useEffect(() => {
+    if (!assignmentOnly || !openAssignmentForWorkPackageId || loading) return;
+    const target = items.find((item) => item.id === openAssignmentForWorkPackageId);
+    if (target) setAssignmentTarget(target);
+  }, [assignmentOnly, items, loading, openAssignmentForWorkPackageId]);
 
   const assignmentsByWorkPackage = useMemo(() => {
     const map = new Map<string, AssignmentView[]>();
@@ -649,6 +664,7 @@ export default function WorkPackagesSection({
       ]);
 
       await reload();
+      onAssignmentsChanged?.();
     } catch (assignError) {
       Alert.alert(
         "Unable to assign",
@@ -674,6 +690,7 @@ export default function WorkPackagesSection({
       if (!remoteWorkPackageId) throw new Error("Work Package is not available in cloud yet.");
       await assignRemoteTeam(remoteProjectId, remoteWorkPackageId, teamId);
       await reload();
+      onAssignmentsChanged?.();
     } catch (error) {
       Alert.alert("Unable to assign Team", error instanceof Error ? error.message : "Team assignment could not be saved.");
     } finally { setAssignmentSaving(false); }
@@ -688,6 +705,7 @@ export default function WorkPackagesSection({
       if (!remoteProjectId || !remoteWorkPackageId) throw new Error("Team assignment is unavailable for this Work Package.");
       await removeTeamFromWorkPackage(remoteProjectId, remoteWorkPackageId, teamId);
       await reload();
+      onAssignmentsChanged?.();
     } catch (error) {
       Alert.alert("Unable to remove Team", error instanceof Error ? error.message : "Team assignment could not be removed.");
     } finally { setAssignmentSaving(false); }
@@ -720,6 +738,7 @@ export default function WorkPackagesSection({
       }
 
       await reload();
+      onAssignmentsChanged?.();
     } catch (statusError) {
       Alert.alert(
         "Unable to update",
@@ -771,6 +790,7 @@ export default function WorkPackagesSection({
       }
 
       await reload();
+      onAssignmentsChanged?.();
     } catch (removeError) {
       Alert.alert(
         "Unable to remove",
@@ -935,7 +955,12 @@ export default function WorkPackagesSection({
   };
 
   return (
-    <View style={styles.section}>
+    <View
+      style={assignmentOnly ? { position: "absolute", width: 0, height: 0, opacity: 0 } : styles.section}
+      pointerEvents={assignmentOnly ? "none" : "auto"}
+      accessibilityElementsHidden={assignmentOnly}
+      importantForAccessibility={assignmentOnly ? "no-hide-descendants" : "auto"}
+    >
       <View style={styles.headerRow}>
         <Text style={styles.sectionTitle}>WORK PACKAGES</Text>
         {canMutate ? (
@@ -1133,6 +1158,7 @@ export default function WorkPackagesSection({
           onClose={() => {
             if (!assignmentSaving) {
               setAssignmentTarget(null);
+              onAssignmentModalClose?.();
             }
           }}
           onAssign={(projectMemberId) => {

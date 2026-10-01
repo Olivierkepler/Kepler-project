@@ -1263,6 +1263,50 @@ export default function ProjectScreen({
                 ...(isShared ? { source: "shared" as const } : {}),
               })
             }
+            onMeasurePlanItem={(planItemId) => {
+              if (!isShared) {
+                navigation.navigate("Measurement", {
+                  projectId: project.id,
+                  planItemId,
+                });
+              } else if (
+                membershipRole === "contractor" ||
+                membershipRole === "field_member"
+              ) {
+                navigation.navigate("SharedCapture", {
+                  remoteProjectId: project.id,
+                  membershipRole,
+                  planItemId,
+                });
+              } else {
+                navigation.navigate("PlanItemDetail", {
+                  projectId: project.id,
+                  planItemId,
+                  source: "shared",
+                });
+              }
+            }}
+            onOpenMeasurementReview={async (planItemId) => {
+              if (!isShared) {
+                const mappedProjectId = user?.uid
+                  ? await getRemoteProjectId(user.uid, project.id)
+                  : null;
+                if (mappedProjectId) {
+                  navigation.navigate("ContributionReview", { projectId: project.id });
+                } else {
+                  navigation.navigate("PlanItemDetail", {
+                    projectId: project.id,
+                    planItemId,
+                  });
+                }
+              } else {
+                navigation.navigate("PlanItemDetail", {
+                  projectId: project.id,
+                  planItemId,
+                  source: "shared",
+                });
+              }
+            }}
             {...(!isShared ? {
               onOpenWorkPackage: async (localWorkPackageId: string, fallbackPlanItemId: string) => {
                 if (!user?.uid) return;

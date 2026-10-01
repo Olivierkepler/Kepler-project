@@ -51,6 +51,8 @@ export type RootStackParamList = {
   SharedCapture: {
     remoteProjectId: string;
     membershipRole: "contractor" | "field_member";
+    /** Optional canonical remote Plan Item to preselect for a To Do action. */
+    planItemId?: string;
   };
 
   Measurement: {
@@ -279,4 +281,3 @@ export type OnboardingStackParamList = {
   OnboardingCapture: undefined;
   OnboardingReconcile: undefined;
 };
-
