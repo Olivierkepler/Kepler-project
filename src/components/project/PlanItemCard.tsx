@@ -59,6 +59,9 @@ type PlanItemCardProps = {
    */
   showAssignmentMeta?: boolean;
 
+  /** Hides execution/attention details when this card is used in the Plan list. */
+  showExecutionDetails?: boolean;
+
   onPress?: () => void;
 
   onView?: () => void;
@@ -138,6 +141,7 @@ export default function PlanItemCard({
   latestDelta = null,
   assignment = null,
   showAssignmentMeta = true,
+  showExecutionDetails = true,
   onPress,
   onView,
   onEdit,
@@ -288,29 +292,31 @@ export default function PlanItemCard({
             {item.label}
           </Text>
 
-          <View
-            style={[
-              styles.statusBadge,
-              latestMeasurement
-                ? styles.measuredStatusBadge
-                : styles.awaitingStatusBadge,
-            ]}
-            accessible
-            accessibilityRole="text"
-            accessibilityLabel={`Field status, ${fieldStatusLabel}`}
-          >
-            <Text
+          {showExecutionDetails ? (
+            <View
               style={[
-                styles.statusBadgeText,
+                styles.statusBadge,
                 latestMeasurement
-                  ? styles.measuredStatusText
-                  : styles.awaitingStatusText,
+                  ? styles.measuredStatusBadge
+                  : styles.awaitingStatusBadge,
               ]}
-              numberOfLines={1}
+              accessible
+              accessibilityRole="text"
+              accessibilityLabel={`Field status, ${fieldStatusLabel}`}
             >
-              {fieldStatusLabel}
-            </Text>
-          </View>
+              <Text
+                style={[
+                  styles.statusBadgeText,
+                  latestMeasurement
+                    ? styles.measuredStatusText
+                    : styles.awaitingStatusText,
+                ]}
+                numberOfLines={1}
+              >
+                {fieldStatusLabel}
+              </Text>
+            </View>
+          ) : null}
         </View>
 
         {/* Middle row */}
@@ -356,7 +362,7 @@ export default function PlanItemCard({
             {plannedValue}
           </Text>
 
-          {latestDelta ? (
+          {showExecutionDetails && latestDelta ? (
             <View
               style={
                 styles.deltaBadge
@@ -373,7 +379,7 @@ export default function PlanItemCard({
           ) : null}
         </View>
 
-        {showAssignmentMeta && assignment ? (
+        {showExecutionDetails && showAssignmentMeta && assignment ? (
           <View style={styles.assignmentRow}>
             <Ionicons
               name={
@@ -403,7 +409,7 @@ export default function PlanItemCard({
         ) : null}
 
         {/* Latest field status */}
-        <View style={styles.previewRow}>
+        {showExecutionDetails ? <View style={styles.previewRow}>
           <Ionicons
             name={
               latestMeasurement
@@ -431,7 +437,7 @@ export default function PlanItemCard({
               color="#C5CBD3"
             />
           ) : null}
-        </View>
+        </View> : null}
 
         {/* Read-only state */}
         {readOnly ? (

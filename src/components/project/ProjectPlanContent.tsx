@@ -259,29 +259,17 @@ export default function ProjectPlanContent({
         }}
       />
 
-      <Text style={styles.eyebrow}>PROJECT PLAN</Text>
-      <Text style={styles.title}>
-        {isShared ? "Your assigned work" : "What the field is measured against."}
-      </Text>
-      <Text style={styles.description}>
-        {isShared
-          ? "Plan items in your assigned work packages for field comparison."
-          : "Quantities and targets form the baseline BuildSigma compares against field reality."}
-      </Text>
-
-      <View style={styles.summaryCard}>
-        <View style={styles.summaryColumn}>
-          <Text style={styles.summaryLabel}>PLANNED</Text>
-          <Text style={styles.summaryValue}>{plannedItems.length}</Text>
-        </View>
-        <View style={styles.summaryColumn}>
-          <Text style={styles.summaryLabel}>MEASURED</Text>
-          <Text style={styles.summaryValue}>{measuredCount}</Text>
-        </View>
-        <View style={styles.summaryColumn}>
-          <Text style={styles.summaryLabel}>PENDING</Text>
-          <Text style={styles.summaryValue}>{pendingCount}</Text>
-        </View>
+      <View
+        style={styles.summaryRow}
+        accessibilityLabel={`${plannedItems.length} plan items, ${workPackages.length} work packages, ${measuredCount} measured, ${pendingCount} pending`}
+      >
+        <Text style={styles.summaryMetric}>
+          {plannedItems.length} plan {plannedItems.length === 1 ? "item" : "items"}
+        </Text>
+        <Text style={styles.summaryDot}>·</Text>
+        <Text style={styles.summaryMetric}>
+          {workPackages.length} work {workPackages.length === 1 ? "package" : "packages"}
+        </Text>
       </View>
 
       {isEmpty ? (
@@ -320,7 +308,7 @@ export default function ProjectPlanContent({
                   group.assignee.roleLabel.trim()
                   ? `Assigned · ${group.assignee.roleLabel}`
                   : `Assigned to ${group.assignee.nameLabel}`
-                : "Unassigned";
+                : "";
 
               return (
                 <View key={group.key} style={styles.packageGroup}>
@@ -328,7 +316,7 @@ export default function ProjectPlanContent({
                     onPress={() => toggleGroupCollapsed(group.key)}
                     style={styles.packageHeader}
                     accessibilityRole="button"
-                    accessibilityLabel={`${group.title}, ${itemCountLabel}, ${assignmentLine}`}
+                    accessibilityLabel={`${group.title}, ${itemCountLabel}${assignmentLine ? `, ${assignmentLine}` : ""}`}
                     accessibilityState={{ expanded: !collapsed }}
                   >
                     <Ionicons
@@ -351,8 +339,8 @@ export default function ProjectPlanContent({
                       <Text style={styles.packageTitle} numberOfLines={2}>
                         {group.title}
                       </Text>
-                      <Text style={styles.packageAssignee} numberOfLines={2}>
-                        {itemCountLabel} · {assignmentLine}
+                      <Text style={styles.packageAssignee} numberOfLines={1}>
+                        {itemCountLabel}{assignmentLine ? ` · ${assignmentLine}` : ""}
                       </Text>
                       <Text style={styles.packageSummary}>
                         {group.measuredCount} measured · {group.pendingCount}{" "}
@@ -378,6 +366,7 @@ export default function ProjectPlanContent({
                             assignmentMaps.byPlanItemId.get(item.id) ?? null
                           }
                           showAssignmentMeta
+                          showExecutionDetails={false}
                           onView={
                             onOpenPlanItem
                               ? () => onOpenPlanItem(item.id)
@@ -465,6 +454,21 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.text.secondary,
     marginTop: 8,
+  },
+  summaryRow: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+  summaryMetric: {
+    ...typography.caption,
+    color: colors.text.secondary,
+    fontWeight: "600",
+  },
+  summaryDot: {
+    ...typography.caption,
+    color: colors.text.muted,
   },
   summaryCard: {
     marginTop: 20,

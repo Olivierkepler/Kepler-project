@@ -172,9 +172,6 @@ const TEXT_MUTED = "#98A2B3";
 const PROJECT_BACKGROUND =
   require("../../../assets/bgproject.png");
 
-const ORGANIZE_BUTTON_BACKGROUND =
-  require("../../../assets/bgbutton1.png");
-
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -1351,67 +1348,21 @@ export default function ProjectPlan({
             style={
               styles.summaryRow
             }
-            accessibilityLabel={`${sortedPlanItems.length} planned, ${measuredCount} measured, ${pendingCount} pending, ${baselineProgressPercent} percent verified`}
+            accessibilityLabel={`${sortedPlanItems.length} plan items, ${workPackages.length} work packages, ${measuredCount} measured, ${pendingCount} pending, ${baselineProgressPercent} percent verified`}
           >
             <View
               style={
                 styles.summaryPrimary
               }
             >
-              <Text
-                style={
-                  styles.summaryMetric
-                }
-              >
-                {
-                  sortedPlanItems.length
-                }{" "}
-                planned
+              <Text style={styles.summaryMetric}>
+                {sortedPlanItems.length} plan {sortedPlanItems.length === 1 ? "item" : "items"}
               </Text>
-
-              <Text
-                style={
-                  styles.summarySep
-                }
-              >
-                ·
-              </Text>
-
-              <Text
-                style={
-                  styles.summaryMetric
-                }
-              >
-                {measuredCount} measured
-              </Text>
-
-              <Text
-                style={
-                  styles.summarySep
-                }
-              >
-                ·
-              </Text>
-
-              <Text
-                style={
-                  styles.summaryMetric
-                }
-              >
-                {pendingCount} pending
+              <Text style={styles.summarySep}>·</Text>
+              <Text style={styles.summaryMetric}>
+                {workPackages.length} work {workPackages.length === 1 ? "package" : "packages"}
               </Text>
             </View>
-
-            <Text
-              style={
-                styles.summaryVerified
-              }
-            >
-              {
-                baselineProgressPercent
-              }
-              % verified
-            </Text>
           </View>
         </View>
 
@@ -1442,37 +1393,10 @@ export default function ProjectPlan({
             accessibilityRole="button"
             accessibilityLabel="Organize work"
           >
-            <ImageBackground
-              source={
-                ORGANIZE_BUTTON_BACKGROUND
-              }
-              style={
-                styles.organizeButtonBackground
-              }
-              resizeMode="cover"
-            >
-              <View
-                style={
-                  styles.organizeButtonContent
-                }
-              >
-                <Ionicons
-                  name="people-outline"
-                  size={17}
-                  color={
-                    KEPLER_NAVY
-                  }
-                />
-
-                <Text
-                  style={
-                    styles.organizeButtonText
-                  }
-                >
-                  Organize work
-                </Text>
-              </View>
-            </ImageBackground>
+            <View style={styles.organizeButtonContent}>
+              <Ionicons name="people-outline" size={16} color={KEPLER_NAVY} />
+              <Text style={styles.organizeButtonText}>Organize items</Text>
+            </View>
           </Pressable>
         </View>
 
@@ -1597,7 +1521,7 @@ export default function ProjectPlan({
                     ? genericAssignee && group.assignee.roleLabel.trim()
                       ? `Assigned · ${group.assignee.roleLabel}`
                       : `Assigned to ${assigneeName}`
-                    : "Unassigned";
+                    : "";
 
                   return (
                     <View
@@ -1617,7 +1541,7 @@ export default function ProjectPlan({
                           onPress={() => toggleGroupExpanded(group.key)}
                           style={styles.packageHeader}
                           accessibilityRole="button"
-                          accessibilityLabel={`${group.title}, ${itemCountLabel}, ${groupAssignmentLine}`}
+                          accessibilityLabel={`${group.title}, ${itemCountLabel}${groupAssignmentLine ? `, ${groupAssignmentLine}` : ""}`}
                           accessibilityState={{ expanded }}
                         >
                           <Ionicons
@@ -1640,8 +1564,8 @@ export default function ProjectPlan({
                             <Text style={styles.packageTitle} numberOfLines={2}>
                               {group.title}
                             </Text>
-                            <Text style={styles.packageAssignee} numberOfLines={2}>
-                              {itemCountLabel} · {groupAssignmentLine}
+                            <Text style={styles.packageAssignee} numberOfLines={1}>
+                              {itemCountLabel}{groupAssignmentLine ? ` · ${groupAssignmentLine}` : ""}
                             </Text>
                             <Text style={styles.packageSummary}>
                               {group.measuredCount} measured · {group.pendingCount} pending
@@ -1740,6 +1664,7 @@ export default function ProjectPlan({
                                 showAssignmentMeta={
                                   true
                                 }
+                                showExecutionDetails={false}
                                 onView={() =>
                                   onOpenPlanItem(
                                     item.id,
@@ -2055,17 +1980,6 @@ const styles =
       fontWeight: "500",
     },
 
-    summaryVerified: {
-      ...typography.caption,
-
-      color:
-        KEPLER_NAVY,
-
-      fontWeight: "700",
-
-      marginLeft: "auto",
-    },
-
     /* ---------------------------------------------------------------------- */
     /* Organize Work                                                          */
     /* ---------------------------------------------------------------------- */
@@ -2075,42 +1989,17 @@ const styles =
     },
 
     organizeButton: {
-      width: "100%",
-
-      minHeight: 48,
-
-      backgroundColor:
-        "transparent",
-
-      borderWidth: 0,
-
-      borderRadius: 0,
-
-      overflow: "hidden",
-    },
-
-    organizeButtonBackground: {
-      width: "100%",
-
-      minHeight: 48,
-
-      justifyContent:
-        "center",
+      minHeight: 44,
+      alignSelf: "flex-end",
+      paddingHorizontal: 10,
+      borderRadius: 8,
+      justifyContent: "center",
     },
 
     organizeButtonContent: {
-      minHeight: 48,
-
       flexDirection: "row",
-
       alignItems: "center",
-
-      justifyContent:
-        "center",
-
-      gap: 7,
-
-      paddingHorizontal: 14,
+      gap: 6,
     },
 
     organizeButtonPressed: {

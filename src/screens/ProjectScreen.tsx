@@ -36,6 +36,7 @@ import ProjectPlan from "../components/project/ProjectPlan";
 import ProjectPlanContent from "../components/project/ProjectPlanContent";
 import ProjectProgressManagementModal from "../components/project/ProjectProgressManagementModal";
 import ProjectTeamContent from "../components/project/ProjectTeamContent";
+import ProjectTodoContent from "../components/project/ProjectTodoContent";
 import WorkProgressContent from "../components/project/WorkProgressContent";
 import { ProjectActivityContent } from "./ProjectActivityScreen";
 
@@ -63,6 +64,7 @@ import {
 import {
   getRemoteProjectId,
 } from "../store/projectCloudMappings";
+import { getRemoteWorkPackageId } from "../store/workPackageCloudMappings";
 
 import {
   getDeltasForProject,
@@ -125,9 +127,10 @@ type Props =
 /* -------------------------------------------------------------------------- */
 
 type ProjectTab =
-  | "project"
   | "plan"
+  | "todo"
   | "team"
+  | "project"
   | "workProgress";
 
 /* -------------------------------------------------------------------------- */
@@ -236,6 +239,7 @@ type ProjectTabsProps = {
   activeTab: ProjectTab;
   onProject: () => void;
   onPlan: () => void;
+  onTodo: () => void;
   onTeam: () => void;
   onWorkProgress: () => void;
 };
@@ -251,6 +255,12 @@ const PROJECT_TAB_ITEMS: {
     label: "Plan",
     icon: "document-text-outline",
     accessibilityLabel: "Plan",
+  },
+  {
+    id: "todo",
+    label: "To Do",
+    icon: "checkbox-outline",
+    accessibilityLabel: "To Do",
   },
   {
     id: "team",
@@ -276,12 +286,14 @@ function ProjectTabs({
   activeTab,
   onProject,
   onPlan,
+  onTodo,
   onTeam,
   onWorkProgress,
 }: ProjectTabsProps) {
   const handlers: Record<ProjectTab, () => void> = {
     project: onProject,
     plan: onPlan,
+    todo: onTodo,
     team: onTeam,
     workProgress: onWorkProgress,
   };
@@ -303,7 +315,7 @@ function ProjectTabs({
             <View style={styles.tabLabelRow}>
               <Ionicons
                 name={tab.icon}
-                size={16}
+                size={14}
                 color={selected ? colors.text.primary : colors.text.muted}
               />
               <Text
@@ -432,6 +444,7 @@ export default function ProjectScreen({
     sharedAssignments,
     setSharedAssignments,
   ] = useState<WorkPackageAssignment[]>([]);
+  const [sharedAssignmentDataComplete, setSharedAssignmentDataComplete] = useState(false);
 
   const [
     sharedProfileByUserId,
@@ -467,6 +480,7 @@ export default function ProjectScreen({
         setProjectDeltas([]);
         setSharedWorkPackages([]);
         setSharedAssignments([]);
+        setSharedAssignmentDataComplete(false);
         setSharedProfileByUserId(new Map());
         setSharedError(null);
         return;
@@ -509,6 +523,7 @@ export default function ProjectScreen({
 
         if (active) {
           setSharedError(null);
+          setSharedAssignmentDataComplete(false);
 
           setProject(
             found ?? null,
@@ -534,6 +549,7 @@ export default function ProjectScreen({
         setProject(undefined);
 
         setSharedError(null);
+        setSharedAssignmentDataComplete(false);
 
         try {
           const snapshot =
@@ -575,6 +591,7 @@ export default function ProjectScreen({
 
             setSharedWorkPackages(remotePackages);
             setSharedAssignments(remoteAssignments);
+            setSharedAssignmentDataComplete(true);
 
             const memberIds = remoteAssignments.map(
               (item) => item.projectMemberId,
@@ -599,6 +616,7 @@ export default function ProjectScreen({
             // Plan items already loaded; grouping metadata is best-effort.
             setSharedWorkPackages([]);
             setSharedAssignments([]);
+            setSharedAssignmentDataComplete(false);
             setSharedProfileByUserId(new Map());
           }
         } catch (error) {
@@ -611,6 +629,7 @@ export default function ProjectScreen({
           setMeasurements([]);
           setSharedWorkPackages([]);
           setSharedAssignments([]);
+          setSharedAssignmentDataComplete(false);
           setSharedProfileByUserId(new Map());
           setProjectDeltas([]);
 
@@ -819,6 +838,10 @@ export default function ProjectScreen({
 
   const openPlanTab = () => {
     setActiveTab("plan");
+  };
+
+  const openTodoTab = () => {
+    setActiveTab("todo");
   };
 
   const openTeamTab = () => {
@@ -1117,6 +1140,7 @@ export default function ProjectScreen({
           onPlan={
             openPlanTab
           }
+          onTodo={openTodoTab}
           onTeam={
             openTeamTab
           }
@@ -1219,6 +1243,54 @@ export default function ProjectScreen({
             onOpenConversation={(params) =>
               navigation.navigate("ProjectChat", params)
             }
+          />
+        ) : null}
+
+        {activeTab === "todo" ? (
+          <ProjectTodoContent
+            projectId={project.id}
+            isShared={isShared}
+            membershipRole={membershipRole}
+            sharedPlanItems={isShared ? plannedItems : undefined}
+            sharedMeasurements={isShared ? measurements : undefined}
+            sharedWorkPackages={isShared ? sharedWorkPackages : undefined}
+            sharedMemberAssignments={isShared ? sharedAssignments : undefined}
+            sharedAssignmentDataComplete={isShared ? sharedAssignmentDataComplete : undefined}
+            onOpenPlanItem={(planItemId) =>
+              navigation.navigate("PlanItemDetail", {
+                projectId: project.id,
+                planItemId,
+                ...(isShared ? { source: "shared" as const } : {}),
+              })
+            }
+            {...(!isShared ? {
+              onOpenWorkPackage: async (localWorkPackageId: string, fallbackPlanItemId: string) => {
+                if (!user?.uid) return;
+                try {
+                  const [remoteProjectId, remoteWorkPackageId] = await Promise.all([
+                    getRemoteProjectId(user.uid, project.id),
+                    getRemoteWorkPackageId(user.uid, project.id, localWorkPackageId),
+                  ]);
+                  if (!remoteProjectId || !remoteWorkPackageId) {
+                    navigation.navigate("PlanItemDetail", {
+                      projectId: project.id,
+                      planItemId: fallbackPlanItemId,
+                    });
+                    return;
+                  }
+                  navigation.navigate("WorkProgressDetail", {
+                    projectId: project.id,
+                    remoteProjectId,
+                    workPackageId: remoteWorkPackageId,
+                  });
+                } catch {
+                  navigation.navigate("PlanItemDetail", {
+                    projectId: project.id,
+                    planItemId: fallbackPlanItemId,
+                  });
+                }
+              },
+            } : {})}
           />
         ) : null}
 
@@ -1762,19 +1834,21 @@ const styles =
 
       position: "relative",
 
-      paddingHorizontal: 4,
+      paddingHorizontal: 1,
     },
 
     tabLabelRow: {
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "center",
-      gap: 5,
+      gap: 3,
       maxWidth: "100%",
     },
 
     tabText: {
       ...typography.button,
+      fontSize: 11,
+      lineHeight: 15,
       color:
         colors.text.muted,
       textAlign: "center",
