@@ -4,6 +4,7 @@ import {
   type KeplerMessage,
   type KeplerReference,
   type KeplerSuggestedAction,
+  MAX_KEPLER_ASSISTANT_MESSAGE_LENGTH,
 } from "../domain/keplerMessage.js";
 import { isNonEmptyString, isRecord } from "./primitives.js";
 
@@ -78,7 +79,7 @@ export function normalizeKeplerMessage(data: unknown): KeplerMessage | undefined
     (data.role !== "user" && data.role !== "assistant") ||
     typeof data.content !== "string" ||
     !isNonEmptyString(data.createdAt) ||
-    data.content.length > MAX_KEPLER_MESSAGE_LENGTH
+    data.content.length > (data.role === "assistant" ? MAX_KEPLER_ASSISTANT_MESSAGE_LENGTH : MAX_KEPLER_MESSAGE_LENGTH)
   ) return undefined;
 
   const result: KeplerMessage = {

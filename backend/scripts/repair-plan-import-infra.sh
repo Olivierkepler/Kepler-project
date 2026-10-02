@@ -13,6 +13,7 @@ REGION="us-central1"
 SERVICE="buildsigma-agent"
 QUEUE="field-variance-agent"
 INVOKER_SA="buildsigma-agent-invoker@${PROJECT}.iam.gserviceaccount.com"
+API_INVOKER_SA="buildsigma-api-runtime@${PROJECT}.iam.gserviceaccount.com"
 EVIDENCE_BUCKET="buildsigma-olivier-2026-evidence"
 
 APPLY=false
@@ -46,6 +47,7 @@ echo "=== Plan Import infrastructure repair ==="
 echo "project=${PROJECT} region=${REGION} service=${SERVICE}"
 echo "agentServiceUrl=${AGENT_SERVICE_URL}"
 echo "invokerSa=${INVOKER_SA}"
+echo "keplerApiInvokerSa=${API_INVOKER_SA}"
 echo "apply=${APPLY}"
 
 echo
@@ -63,6 +65,27 @@ RUNTIME_SA="$(gcloud run services describe "${SERVICE}" \
 if [[ -z "${RUNTIME_SA}" ]]; then
   RUNTIME_SA="${PROJECT}@appspot.gserviceaccount.com"
   echo "WARN: runtime SA not set on service; defaulting to ${RUNTIME_SA}"
+fi
+
+echo
+echo "--- Cloud Run IAM (run.invoker for Kepler API runtime) ---"
+if gcloud run services get-iam-policy "${SERVICE}" \
+  --project="${PROJECT}" \
+  --region="${REGION}" \
+  --flatten="bindings[].members" \
+  --filter="bindings.role:roles/run.invoker AND bindings.members:serviceAccount:${API_INVOKER_SA}" \
+  --format="value(bindings.role)" | grep -q run.invoker; then
+  echo "OK: ${API_INVOKER_SA} already has roles/run.invoker on ${SERVICE}"
+else
+  echo "MISSING: ${API_INVOKER_SA} lacks roles/run.invoker on ${SERVICE}"
+  if [[ "${APPLY}" == true ]]; then
+    gcloud run services add-iam-policy-binding "${SERVICE}" \
+      --project="${PROJECT}" \
+      --region="${REGION}" \
+      --member="serviceAccount:${API_INVOKER_SA}" \
+      --role="roles/run.invoker"
+    echo "APPLIED: roles/run.invoker"
+  fi
 fi
 echo "runtimeSa=${RUNTIME_SA}"
 
@@ -144,7 +167,7 @@ if [[ "${APPLY}" == true ]]; then
     --source . \
     --service-account="${RUNTIME_SA}" \
     --no-allow-unauthenticated \
-    --set-env-vars="GOOGLE_CLOUD_PROJECT=${PROJECT},GOOGLE_CLOUD_LOCATION=global,GEMINI_MODEL=gemini-3.5-flash,GOOGLE_GENAI_USE_ENTERPRISE=true,AGENT_OIDC_MODE=production,AGENT_SERVICE_URL=${AGENT_SERVICE_URL},CLOUD_TASKS_INVOKER_SERVICE_ACCOUNT_EMAIL=${INVOKER_SA},EVIDENCE_STORAGE_BUCKET=${EVIDENCE_BUCKET}" \
+    --set-env-vars="GOOGLE_CLOUD_PROJECT=${PROJECT},GOOGLE_CLOUD_LOCATION=global,GEMINI_MODEL=gemini-3.5-flash,GOOGLE_GENAI_USE_ENTERPRISE=true,AGENT_OIDC_MODE=production,AGENT_SERVICE_URL=${AGENT_SERVICE_URL},CLOUD_TASKS_INVOKER_SERVICE_ACCOUNT_EMAIL=${INVOKER_SA},KEPLER_API_INVOKER_SERVICE_ACCOUNT_EMAIL=${API_INVOKER_SA},EVIDENCE_STORAGE_BUCKET=${EVIDENCE_BUCKET}" \
     --quiet
   echo "Redeploy complete."
 fi

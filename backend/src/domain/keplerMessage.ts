@@ -35,3 +35,5 @@ export type KeplerMessage = {
   references?: KeplerReference[];
   suggestedActions?: KeplerSuggestedAction[];
 };
+
+export const MAX_KEPLER_ASSISTANT_MESSAGE_LENGTH = 8000;

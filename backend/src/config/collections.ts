@@ -48,6 +48,7 @@ export const COLLECTIONS = {
   keplerConversations: "keplerConversations",
   /** Kepler AI messages, separate from human Project Chat. */
   keplerMessages: "keplerMessages",
+  keplerGenerationClaims: "keplerGenerationClaims",
   /** Project-scoped human feed posts (Phase Feed 2A). */
   feedPosts: "feedPosts",
   /** Per-user acknowledgements on feed posts (Phase Feed 2B). */

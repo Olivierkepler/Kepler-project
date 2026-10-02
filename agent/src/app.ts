@@ -7,6 +7,8 @@ import type { AgentServiceEnv } from "./config/env.js";
 import type { PlanDocumentIntelligenceRunner } from "./agent/planDocumentIntelligenceAgent.js";
 import { createInternalAgentRunsRouter } from "./routes/internalAgentRuns.js";
 import { createInternalPlanImportsRouter } from "./routes/internalPlanImports.js";
+import { createInternalKeplerRouter } from "./routes/internalKepler.js";
+import type { KeplerConversationRunner } from "./agent/keplerConversationAgent.js";
 import type { processPlanImportExecution } from "./services/processPlanImport.js";
 import type { resumeAgentRunExecution } from "./services/resumeAgentRun.js";
 import type { startAgentRunExecution } from "./services/startAgentRun.js";
@@ -18,11 +20,12 @@ export type CreateAppDeps = {
   resumeExecution?: typeof resumeAgentRunExecution;
   processPlanImport?: typeof processPlanImportExecution;
   planDocumentRunner?: PlanDocumentIntelligenceRunner;
+  keplerRunner?: KeplerConversationRunner;
 };
 
 export function createApp(deps: CreateAppDeps) {
   const app = express();
-  app.use(express.json({ limit: "32kb" }));
+  app.use(express.json({ limit: "64kb" }));
 
   const verifyOidc =
     deps.verifyOidc ??
@@ -30,6 +33,7 @@ export function createApp(deps: CreateAppDeps) {
       oidcMode: deps.env.oidcMode,
       expectedAudience: deps.env.agentServiceUrl,
       expectedServiceAccountEmail: deps.env.invokerServiceAccountEmail,
+      additionalAllowedServiceAccountEmails: deps.env.keplerApiInvokerServiceAccountEmail ? [deps.env.keplerApiInvokerServiceAccountEmail] : [],
       localOidcSecret: deps.env.localOidcSecret,
     });
 
@@ -53,6 +57,8 @@ export function createApp(deps: CreateAppDeps) {
       model: deps.env.geminiModel,
     }),
   );
+
+  app.use(createInternalKeplerRouter({ verifyOidc, runner: deps.keplerRunner, model: deps.env.geminiModel }));
 
   return app;
 }

@@ -17,6 +17,7 @@ const REGION = "us-central1";
 const SERVICE = "buildsigma-agent";
 const QUEUE = "field-variance-agent";
 const INVOKER_SA = `buildsigma-agent-invoker@${PROJECT}.iam.gserviceaccount.com`;
+const API_INVOKER_SA = `buildsigma-api-runtime@${PROJECT}.iam.gserviceaccount.com`;
 
 const apply = process.argv.includes("--apply");
 const testImportArg = process.argv.find((arg) =>
@@ -110,8 +111,9 @@ function policyHasBinding(
 async function ensureRunInvokerBinding(
   token: string,
   agentUrl: string,
+  serviceAccountEmail: string,
 ): Promise<{ hadBinding: boolean; applied: boolean }> {
-  const member = `serviceAccount:${INVOKER_SA}`;
+  const member = `serviceAccount:${serviceAccountEmail}`;
   const role = "roles/run.invoker";
   const getUrl = `https://run.googleapis.com/v1/projects/${PROJECT}/locations/${REGION}/services/${SERVICE}:getIamPolicy`;
   const current = await api(token, getUrl, { method: "GET" });
@@ -322,7 +324,7 @@ async function main(): Promise<void> {
     }),
   );
 
-  const invokerBinding = await ensureRunInvokerBinding(token, agentServiceUrl);
+  const invokerBinding = await ensureRunInvokerBinding(token, agentServiceUrl, INVOKER_SA);
   console.log(
     JSON.stringify({
       event: "run_invoker_binding",
@@ -331,6 +333,15 @@ async function main(): Promise<void> {
       applied: invokerBinding.applied,
     }),
   );
+
+  const keplerApiInvokerBinding = await ensureRunInvokerBinding(token, agentServiceUrl, API_INVOKER_SA);
+  console.log(JSON.stringify({
+    event: "kepler_api_run_invoker_binding",
+    member: `serviceAccount:${API_INVOKER_SA}`,
+    hadBinding: keplerApiInvokerBinding.hadBinding,
+    applied: keplerApiInvokerBinding.applied,
+    requiredAgentEnv: "KEPLER_API_INVOKER_SERVICE_ACCOUNT_EMAIL",
+  }));
 
   if (runtimeSa) {
     const vertexMember = `serviceAccount:${runtimeSa}`;

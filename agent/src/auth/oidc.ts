@@ -43,11 +43,12 @@ function extractBearerToken(
 export function createProductionOidcVerifier(args: {
   expectedAudience: string;
   expectedServiceAccountEmail: string;
+  additionalAllowedServiceAccountEmails?: string[];
   oauthClient?: OAuth2Client;
 }): OidcVerifier {
   const client = args.oauthClient ?? new OAuth2Client();
   const expectedAudience = args.expectedAudience.replace(/\/$/, "");
-  const expectedEmail = args.expectedServiceAccountEmail.trim().toLowerCase();
+  const expectedEmails = new Set([args.expectedServiceAccountEmail, ...(args.additionalAllowedServiceAccountEmails ?? [])].map((email) => email.trim().toLowerCase()).filter(Boolean));
 
   return async (authorizationHeader) => {
     const token = extractBearerToken(authorizationHeader);
@@ -76,7 +77,7 @@ export function createProductionOidcVerifier(args: {
         return { ok: false, reason: "missing_email" };
       }
 
-      if (email !== expectedEmail) {
+      if (!expectedEmails.has(email)) {
         return { ok: false, reason: "unexpected_service_identity" };
       }
 
@@ -117,10 +118,11 @@ export function createProductionOidcVerifier(args: {
 export function createLocalTestOidcVerifier(args: {
   expectedAudience: string;
   expectedServiceAccountEmail: string;
+  additionalAllowedServiceAccountEmails?: string[];
   secret: string;
 }): OidcVerifier {
   const expectedAudience = args.expectedAudience.replace(/\/$/, "");
-  const expectedEmail = args.expectedServiceAccountEmail.trim().toLowerCase();
+  const expectedEmails = new Set([args.expectedServiceAccountEmail, ...(args.additionalAllowedServiceAccountEmails ?? [])].map((email) => email.trim().toLowerCase()).filter(Boolean));
   const secret = args.secret;
 
   return async (authorizationHeader) => {
@@ -167,7 +169,7 @@ export function createLocalTestOidcVerifier(args: {
     const aud = (body.aud ?? "").replace(/\/$/, "");
     const issuer = body.iss ?? "";
 
-    if (email !== expectedEmail) {
+    if (!expectedEmails.has(email)) {
       return { ok: false, reason: "unexpected_service_identity" };
     }
 
@@ -216,6 +218,7 @@ export function createOidcVerifierFromEnv(args: {
   oidcMode: "production" | "local_test";
   expectedAudience: string;
   expectedServiceAccountEmail: string;
+  additionalAllowedServiceAccountEmails?: string[];
   localOidcSecret: string | null;
 }): OidcVerifier {
   if (args.oidcMode === "local_test") {
@@ -225,6 +228,7 @@ export function createOidcVerifierFromEnv(args: {
     return createLocalTestOidcVerifier({
       expectedAudience: args.expectedAudience,
       expectedServiceAccountEmail: args.expectedServiceAccountEmail,
+      additionalAllowedServiceAccountEmails: args.additionalAllowedServiceAccountEmails,
       secret: args.localOidcSecret,
     });
   }
@@ -232,5 +236,6 @@ export function createOidcVerifierFromEnv(args: {
   return createProductionOidcVerifier({
     expectedAudience: args.expectedAudience,
     expectedServiceAccountEmail: args.expectedServiceAccountEmail,
+    additionalAllowedServiceAccountEmails: args.additionalAllowedServiceAccountEmails,
   });
 }

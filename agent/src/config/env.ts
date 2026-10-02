@@ -5,6 +5,7 @@ export type AgentServiceEnv = {
   geminiModel: string;
   agentServiceUrl: string;
   invokerServiceAccountEmail: string;
+  keplerApiInvokerServiceAccountEmail?: string | null;
   oidcMode: "production" | "local_test";
   localOidcSecret: string | null;
 };
@@ -63,6 +64,7 @@ export function loadAgentServiceEnv(
     geminiModel,
     agentServiceUrl: agentServiceUrl.replace(/\/$/, ""),
     invokerServiceAccountEmail,
+    keplerApiInvokerServiceAccountEmail: env.KEPLER_API_INVOKER_SERVICE_ACCOUNT_EMAIL?.trim() || null,
     oidcMode: oidcModeRaw,
     localOidcSecret,
   };

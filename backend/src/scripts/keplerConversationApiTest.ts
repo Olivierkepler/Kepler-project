@@ -7,6 +7,7 @@ import type { KeplerConversation } from "../domain/keplerConversation.js";
 import type { KeplerMessage } from "../domain/keplerMessage.js";
 import { createKeplerConversationsRouter } from "../routes/keplerConversations.js";
 import { createKeplerConversationService } from "../services/kepler/keplerConversationService.js";
+import type { ProjectAccessContext } from "../services/collaboration/projectAccessScope.js";
 import type { KeplerPage } from "../repositories/keplerConversationsRepository.js";
 import {
   DEFAULT_KEPLER_PAGE_SIZE,
@@ -39,7 +40,16 @@ function makeHarness() {
       const owner = projectOwners.get(projectId);
       const role = memberships.get(`${projectId}:${uid}`);
       if (!owner || (owner !== uid && !role)) throw new ProjectAccessError("Project not found", 404);
-      return { project: { id: projectId }, role: owner === uid ? "owner" : role };
+      return {
+        project: { id: projectId } as ProjectAccessContext["project"],
+        currentUserId: uid,
+        isOwner: owner === uid,
+        membership: null,
+        role: owner === uid ? "owner" : role!,
+        accessMode: role === "contractor" || role === "field_member" ? "assigned_scope" : "full",
+        assignedWorkPackageIds: [],
+        assignedPlanItemIds: [],
+      };
     },
     createConversation: async (input) => {
       const id = `conversation-${++conversationNumber}`;
@@ -99,6 +109,27 @@ function makeHarness() {
       const last = items.at(-1);
       return { items, nextCursor: hasMore && last ? encodeKeplerCursor(last.createdAt, last.id) : null };
     },
+    buildContext: async ({ access }) => ({
+      project: { id: access.project.id, name: "Test", location: "", status: "active" }, datasets: [],
+      planItems: [], workPackages: [], measurements: [], deltas: [], evidence: [], activity: [],
+      allowedReferences: [{ kind: "project", canonicalId: access.project.id, label: "Test" }],
+    }),
+    generate: async () => ({ message: "Test response", references: [], suggestedActions: [] }),
+    claim: async (userMessage) => {
+      const id = `assistant-for-${userMessage.id}`;
+      const existing = messages.get(id);
+      if (existing) return { outcome: "completed" as const, message: existing };
+      return { outcome: "acquired" as const, leaseToken: "test-lease" };
+    },
+    release: async () => undefined,
+    persistAssistant: async ({ userMessage, content, references, suggestedActions, createdAt }) => {
+      const id = `assistant-for-${userMessage.id}`;
+      const existing = messages.get(id);
+      if (existing) return existing;
+      const assistant: KeplerMessage = { id, conversationId: userMessage.conversationId, projectId: userMessage.projectId, role: "assistant", content, createdAt, references, suggestedActions };
+      messages.set(id, assistant);
+      return assistant;
+    },
     now: () => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)).toISOString(),
   });
 
@@ -156,7 +187,7 @@ async function main() {
     const memberPath = `${path}/${memberConversation.id}/messages`;
     const first = await call(memberPath, { uid: "member", method: "POST", body: { content: "  Check the installed wall  ", clientMessageId: "send-1" } });
     assert.equal(first.status, 201);
-    assert.equal((first.body.assistantMessage), null, "no assistant response is generated");
+    assert.equal((first.body.assistantMessage as Record<string, unknown>).content, "Test response", "injected assistant response is persisted");
     const userMessage = first.body.userMessage as Record<string, unknown>;
     assert.equal(userMessage.content, "Check the installed wall");
     assert.equal(userMessage.role, "user");

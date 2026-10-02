@@ -6,6 +6,12 @@ export type AgentCloudTasksEnv = {
   invokerServiceAccountEmail: string;
 };
 
+export function loadKeplerAgentServiceUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const value = env.AGENT_SERVICE_URL?.trim();
+  if (!value) throw new Error("AGENT_SERVICE_URL is required for Kepler");
+  return value.replace(/\/$/, "");
+}
+
 /**
  * Loads Cloud Tasks / agent enqueue configuration.
  * Prefers GOOGLE_CLOUD_PROJECT (same convention as Firebase Admin).

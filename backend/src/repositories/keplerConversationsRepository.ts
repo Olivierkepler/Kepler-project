@@ -152,3 +152,112 @@ export async function listKeplerMessages(input: {
     nextCursor: hasMore && last ? encodeKeplerCursor(last.createdAt, last.id) : null,
   };
 }
+
+export type KeplerGenerationClaimResult =
+  | { outcome: "acquired"; leaseToken: string }
+  | { outcome: "in_progress" }
+  | { outcome: "completed"; message: KeplerMessage };
+
+function assistantMessageIdFor(userMessageId: string): string {
+  return `kepler-assistant-${createHash("sha256").update(userMessageId).digest("hex")}`;
+}
+
+/** Atomically claim one assistant generation for a persisted user message. */
+export async function acquireKeplerAssistantGeneration(input: {
+  userMessage: KeplerMessage;
+  leaseMs?: number;
+  now?: number;
+}): Promise<KeplerGenerationClaimResult> {
+  const userMessage = input.userMessage;
+  if (userMessage.role !== "user") throw new Error("User message required");
+  const messageRef = db.collection(COLLECTIONS.keplerMessages).doc(assistantMessageIdFor(userMessage.id));
+  const claimRef = db.collection(COLLECTIONS.keplerGenerationClaims).doc(assistantMessageIdFor(userMessage.id));
+  const now = input.now ?? Date.now();
+  const leaseUntil = new Date(now + (input.leaseMs ?? 180_000)).toISOString();
+  const leaseToken = randomUUID();
+
+  return db.runTransaction(async (transaction) => {
+    const [assistantSnapshot, claimSnapshot] = await Promise.all([
+      transaction.get(messageRef),
+      transaction.get(claimRef),
+    ]);
+    if (assistantSnapshot.exists) {
+      const assistant = normalizeKeplerMessage(assistantSnapshot.data());
+      if (assistant?.role === "assistant" && assistant.conversationId === userMessage.conversationId) {
+        return { outcome: "completed", message: assistant };
+      }
+      throw new Error("Invalid existing assistant message");
+    }
+    const currentLease = claimSnapshot.data()?.leaseUntil;
+    if (typeof currentLease === "string" && currentLease > new Date(now).toISOString()) {
+      return { outcome: "in_progress" };
+    }
+    transaction.set(claimRef, {
+      userMessageId: userMessage.id,
+      conversationId: userMessage.conversationId,
+      projectId: userMessage.projectId,
+      leaseToken,
+      leaseUntil,
+      updatedAt: new Date(now).toISOString(),
+    });
+    return { outcome: "acquired", leaseToken };
+  });
+}
+
+export async function releaseKeplerAssistantGeneration(userMessageId: string, leaseToken: string): Promise<void> {
+  const ref = db.collection(COLLECTIONS.keplerGenerationClaims).doc(assistantMessageIdFor(userMessageId));
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    if (snapshot.data()?.leaseToken === leaseToken) transaction.delete(ref);
+  });
+}
+
+/** Persists one validated assistant response and transcript timestamp atomically. */
+export async function createKeplerAssistantMessageIdempotently(input: {
+  userMessage: KeplerMessage;
+  userUid: string;
+  leaseToken: string;
+  content: string;
+  references: KeplerMessage["references"];
+  suggestedActions: KeplerMessage["suggestedActions"];
+  createdAt: string;
+}): Promise<KeplerMessage> {
+  const user = input.userMessage;
+  if (user.role !== "user") throw new Error("User message required");
+  const conversationRef = db.collection(COLLECTIONS.keplerConversations).doc(user.conversationId);
+  const assistantRef = db.collection(COLLECTIONS.keplerMessages).doc(assistantMessageIdFor(user.id));
+  const claimRef = db.collection(COLLECTIONS.keplerGenerationClaims).doc(assistantMessageIdFor(user.id));
+  const candidate = normalizeKeplerMessage({
+    id: assistantRef.id,
+    conversationId: user.conversationId,
+    projectId: user.projectId,
+    role: "assistant",
+    content: input.content,
+    createdAt: input.createdAt,
+    references: input.references,
+    suggestedActions: input.suggestedActions,
+  });
+  if (!candidate) throw new Error("Invalid assistant message");
+
+  return db.runTransaction(async (transaction) => {
+    const [conversationSnapshot, existingSnapshot] = await Promise.all([
+      transaction.get(conversationRef),
+      transaction.get(assistantRef),
+    ]);
+    const conversation = conversationSnapshot.exists ? normalizeKeplerConversation(conversationSnapshot.data()) : undefined;
+    if (!conversation || conversation.id !== user.conversationId || conversation.projectId !== user.projectId || conversation.userUid !== input.userUid) {
+      throw new Error("Kepler conversation not found");
+    }
+    if (existingSnapshot.exists) {
+      const existing = normalizeKeplerMessage(existingSnapshot.data());
+      if (!existing || existing.role !== "assistant" || existing.conversationId !== user.conversationId) throw new Error("Invalid assistant message");
+      return existing;
+    }
+    const claimSnapshot = await transaction.get(claimRef);
+    if (claimSnapshot.data()?.leaseToken !== input.leaseToken) throw new Error("Kepler generation claim lost");
+    transaction.create(assistantRef, candidate);
+    transaction.update(conversationRef, { updatedAt: input.createdAt });
+    transaction.delete(claimRef);
+    return candidate;
+  });
+}

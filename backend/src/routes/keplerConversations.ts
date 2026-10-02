@@ -85,9 +85,10 @@ export function createKeplerConversationsRouter(service: KeplerService = keplerC
     if (!body) return sendError(res, 400, "Invalid Kepler message payload");
     try {
       const result = await service.postUserMessage({ projectId, conversationId, uid, ...body });
-      res.status(result.created ? 201 : 200).json({
+      res.status(result.generationStatus === "processing" ? 202 : result.created ? 201 : 200).json({
         userMessage: toKeplerMessageDTO(result.message),
-        assistantMessage: null,
+        assistantMessage: result.assistantMessage ? toKeplerMessageDTO(result.assistantMessage) : null,
+        generationStatus: result.generationStatus,
       });
     } catch (error) {
       await routeError(res, error);
