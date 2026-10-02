@@ -6,6 +6,13 @@ export type MainTabParamList = {
   Profile: undefined;
 };
 
+export type ProjectWorkspaceTab =
+  | "plan"
+  | "todo"
+  | "team"
+  | "project"
+  | "workProgress";
+
 export type RootStackParamList = {
   MainTabs:
     | undefined
@@ -15,6 +22,8 @@ export type RootStackParamList = {
 
   Project: {
     projectId: string;
+    /** Optional existing ProjectScreen section to show when opened from a shortcut. */
+    initialTab?: ProjectWorkspaceTab;
     /**
      * Project open source (Phase 1I.2).
      * Omit or "local" = owned AsyncStorage project (existing behavior).
@@ -42,6 +51,9 @@ export type RootStackParamList = {
   CaptureProject: {
     projectId: string;
   };
+
+  /** Existing generic Capture chooser, moved out of the Kepler AI tab. */
+  CaptureWorkspace: undefined;
 
   /**
    * Shared/cloud-direct field contribution (Phase 2I.2).

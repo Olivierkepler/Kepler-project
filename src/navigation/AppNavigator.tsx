@@ -224,6 +224,11 @@ export default function AppNavigator() {
       />
 
       <Stack.Screen
+        name="CaptureWorkspace"
+        component={CaptureScreen}
+      />
+
+      <Stack.Screen
         name="SharedCapture"
         component={SharedCaptureScreen}
       />

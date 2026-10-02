@@ -1,5 +1,4 @@
 import React, { memo, useEffect, useRef } from "react";
-
 import {
   Animated,
   Easing,
@@ -8,7 +7,6 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-
 import Svg, {
   Defs,
   Ellipse,
@@ -18,30 +16,12 @@ import Svg, {
   Stop,
 } from "react-native-svg";
 
-/* -------------------------------------------------------------------------- */
-/*                                   Types                                    */
-/* -------------------------------------------------------------------------- */
-
 type Props = {
-  /**
-   * Width and height of the complete orb.
-   */
   size?: number;
-
-  /**
-   * Enable or disable animation.
-   */
   animated?: boolean;
-
-  /**
-   * Optional external styling.
-   */
   style?: StyleProp<ViewStyle>;
-
-  /**
-   * Accessibility description.
-   */
   accessibilityLabel?: string;
+  decorative?: boolean;
 };
 
 type RibbonDefinition = {
@@ -58,190 +38,129 @@ type RibbonDefinition = {
   translateYPeak: number;
 };
 
-/* -------------------------------------------------------------------------- */
-/*                              Brand Colors                                  */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Primary EH orange:
- * #FF641A
- *
- * The surrounding colors are intentionally derived
- * from the same orange family to create depth without
- * introducing blue, purple, yellow, or unrelated hues.
- */
 const COLORS = {
-  primary: "#FF641A",
+  navyDeep: "#050D33",
+  navyDark: "#0B1550",
+  navy: "#012169",
+  navyBright: "#073D9A",
 
-  deep: "#B83200",
-  dark: "#D94308",
-  strong: "#EB4F0D",
+  blue: "#1E8FE0",
+  blueBright: "#50B8FF",
+  bluePale: "#B9E4FF",
 
-  bright: "#FF7A3A",
-  light: "#FF9A68",
-  soft: "#FFC0A0",
-  pale: "#FFE1D2",
+  redDark: "#A90F28",
+  red: "#E31837",
+  redBright: "#FF3856",
+  redSoft: "#FF7890",
+
+  silver: "#F1F3F5",
+  white: "#FFFFFF",
 } as const;
-
-/* -------------------------------------------------------------------------- */
-/*                                Configuration                               */
-/* -------------------------------------------------------------------------- */
 
 const VIEWBOX_SIZE = 400;
 const CENTER = VIEWBOX_SIZE / 2;
 
 const ORB_RADIUS = 128;
-const AMBIENT_RADIUS = 172;
+const AURA_RADIUS = 174;
 
-/**
- * Thicker strokes + stronger opacity make the orb
- * easier to read at small sizes on light backgrounds.
- */
 const RIBBONS: readonly RibbonDefinition[] = [
   {
-    key: "ribbon-1",
-
+    key: "red-primary",
     path:
-      "M74 203 C84 100 178 48 278 84 C354 111 351 210 296 267 C247 318 150 327 91 269 C63 241 61 218 74 203",
-
-    gradientId: "primaryOrangeGradient",
-
-    strokeWidth: 8,
-    opacity: 0.96,
-
+      "M66 220 C94 102 194 54 299 97 C353 119 358 190 324 242 C280 309 171 335 89 278 C57 256 54 239 66 220",
+    gradientId: "redEnergy",
+    strokeWidth: 10,
+    opacity: 0.98,
     duration: 8200,
     delay: 0,
-
     rotationDirection: 1,
-
     scalePeak: 1.025,
-
     translateXPeak: 3,
-    translateYPeak: -4,
-  },
-
-  {
-    key: "ribbon-2",
-
-    path:
-      "M89 241 C119 287 192 308 259 279 C330 247 350 174 311 128 C278 88 206 92 163 128 C118 165 104 223 70 210",
-
-    gradientId: "brightOrangeGradient",
-
-    strokeWidth: 7,
-    opacity: 0.9,
-
-    duration: 10400,
-    delay: 420,
-
-    rotationDirection: -1,
-
-    scalePeak: 1.04,
-
-    translateXPeak: -5,
-    translateYPeak: 2,
-  },
-
-  {
-    key: "ribbon-3",
-
-    path:
-      "M102 127 C151 82 234 60 290 112 C329 149 314 206 273 231 C220 264 142 249 110 287 C94 306 99 324 109 337",
-
-    gradientId: "deepOrangeGradient",
-
-    strokeWidth: 6,
-    opacity: 0.84,
-
-    duration: 12600,
-    delay: 700,
-
-    rotationDirection: 1,
-
-    scalePeak: 1.035,
-
-    translateXPeak: 2,
-    translateYPeak: 5,
-  },
-
-  {
-    key: "ribbon-4",
-
-    path:
-      "M78 178 C118 212 175 222 219 192 C260 165 271 113 316 101 C334 96 346 101 356 109",
-
-    gradientId: "highlightOrangeGradient",
-
-    strokeWidth: 5,
-    opacity: 0.8,
-
-    duration: 13800,
-    delay: 900,
-
-    rotationDirection: -1,
-
-    scalePeak: 1.02,
-
-    translateXPeak: -3,
     translateYPeak: -3,
   },
+  {
+    key: "blue-orbit",
+    path:
+      "M82 247 C132 300 218 307 290 257 C350 215 346 143 295 108 C245 74 176 92 137 137 C102 178 95 220 66 210",
+    gradientId: "blueOrbit",
+    strokeWidth: 6,
+    opacity: 0.9,
+    duration: 10400,
+    delay: 340,
+    rotationDirection: -1,
+    scalePeak: 1.035,
+    translateXPeak: -4,
+    translateYPeak: 2,
+  },
+  {
+    key: "red-secondary",
+    path:
+      "M106 124 C163 79 247 69 300 119 C332 150 320 205 278 232 C225 266 144 250 109 288 C91 308 96 329 107 340",
+    gradientId: "redSecondary",
+    strokeWidth: 5,
+    opacity: 0.74,
+    duration: 12600,
+    delay: 700,
+    rotationDirection: 1,
+    scalePeak: 1.03,
+    translateXPeak: 2,
+    translateYPeak: 4,
+  },
+  {
+    key: "light-orbit",
+    path:
+      "M76 179 C117 215 177 225 222 193 C263 164 278 113 319 101 C338 95 350 100 360 108",
+    gradientId: "lightOrbit",
+    strokeWidth: 3.5,
+    opacity: 0.9,
+    duration: 13800,
+    delay: 900,
+    rotationDirection: -1,
+    scalePeak: 1.018,
+    translateXPeak: -2,
+    translateYPeak: -2,
+  },
 ];
-
-/* -------------------------------------------------------------------------- */
-/*                                  Gradients                                 */
-/* -------------------------------------------------------------------------- */
 
 function RibbonGradients() {
   return (
     <Defs>
-      {/* ------------------------------------------------------------ */}
-      {/* Primary #FF641A ribbon                                       */}
-      {/* ------------------------------------------------------------ */}
-
       <LinearGradient
-        id="primaryOrangeGradient"
+        id="redEnergy"
         x1="0%"
-        y1="0%"
+        y1="20%"
         x2="100%"
-        y2="100%"
+        y2="80%"
       >
         <Stop
           offset="0%"
-          stopColor={COLORS.deep}
-          stopOpacity={0.22}
+          stopColor={COLORS.redDark}
+          stopOpacity={0.05}
         />
-
         <Stop
-          offset="24%"
-          stopColor={COLORS.strong}
-          stopOpacity={0.8}
+          offset="20%"
+          stopColor={COLORS.red}
+          stopOpacity={0.88}
         />
-
         <Stop
           offset="50%"
-          stopColor={COLORS.primary}
+          stopColor={COLORS.redBright}
           stopOpacity={1}
         />
-
         <Stop
           offset="74%"
-          stopColor={COLORS.bright}
-          stopOpacity={0.9}
+          stopColor={COLORS.red}
+          stopOpacity={0.95}
         />
-
         <Stop
           offset="100%"
-          stopColor={COLORS.soft}
-          stopOpacity={0.22}
+          stopColor={COLORS.redSoft}
+          stopOpacity={0.08}
         />
       </LinearGradient>
 
-      {/* ------------------------------------------------------------ */}
-      {/* Brighter orange ribbon                                       */}
-      {/* ------------------------------------------------------------ */}
-
       <LinearGradient
-        id="brightOrangeGradient"
+        id="blueOrbit"
         x1="100%"
         y1="0%"
         x2="0%"
@@ -249,41 +168,33 @@ function RibbonGradients() {
       >
         <Stop
           offset="0%"
-          stopColor={COLORS.soft}
-          stopOpacity={0.18}
+          stopColor={COLORS.bluePale}
+          stopOpacity={0.04}
         />
-
         <Stop
-          offset="28%"
-          stopColor={COLORS.bright}
-          stopOpacity={0.82}
+          offset="24%"
+          stopColor={COLORS.blueBright}
+          stopOpacity={0.72}
         />
-
         <Stop
-          offset="52%"
-          stopColor={COLORS.primary}
+          offset="50%"
+          stopColor={COLORS.blue}
           stopOpacity={1}
         />
-
         <Stop
-          offset="76%"
-          stopColor={COLORS.strong}
-          stopOpacity={0.78}
+          offset="78%"
+          stopColor={COLORS.navyBright}
+          stopOpacity={0.86}
         />
-
         <Stop
           offset="100%"
-          stopColor={COLORS.dark}
-          stopOpacity={0.18}
+          stopColor={COLORS.navy}
+          stopOpacity={0.05}
         />
       </LinearGradient>
 
-      {/* ------------------------------------------------------------ */}
-      {/* Deeper dimensional ribbon                                    */}
-      {/* ------------------------------------------------------------ */}
-
       <LinearGradient
-        id="deepOrangeGradient"
+        id="redSecondary"
         x1="0%"
         y1="100%"
         x2="100%"
@@ -291,41 +202,33 @@ function RibbonGradients() {
       >
         <Stop
           offset="0%"
-          stopColor={COLORS.deep}
-          stopOpacity={0.2}
+          stopColor={COLORS.navy}
+          stopOpacity={0}
         />
-
         <Stop
-          offset="30%"
-          stopColor={COLORS.dark}
-          stopOpacity={0.72}
+          offset="25%"
+          stopColor={COLORS.red}
+          stopOpacity={0.56}
         />
-
         <Stop
-          offset="52%"
-          stopColor={COLORS.primary}
-          stopOpacity={0.98}
+          offset="55%"
+          stopColor={COLORS.redBright}
+          stopOpacity={0.9}
         />
-
         <Stop
-          offset="76%"
-          stopColor={COLORS.bright}
-          stopOpacity={0.72}
+          offset="78%"
+          stopColor={COLORS.blue}
+          stopOpacity={0.48}
         />
-
         <Stop
           offset="100%"
-          stopColor={COLORS.light}
-          stopOpacity={0.16}
+          stopColor={COLORS.navy}
+          stopOpacity={0}
         />
       </LinearGradient>
 
-      {/* ------------------------------------------------------------ */}
-      {/* Light-catching ribbon                                        */}
-      {/* ------------------------------------------------------------ */}
-
       <LinearGradient
-        id="highlightOrangeGradient"
+        id="lightOrbit"
         x1="0%"
         y1="0%"
         x2="100%"
@@ -333,41 +236,33 @@ function RibbonGradients() {
       >
         <Stop
           offset="0%"
-          stopColor={COLORS.pale}
-          stopOpacity={0.08}
+          stopColor={COLORS.white}
+          stopOpacity={0}
         />
-
         <Stop
           offset="28%"
-          stopColor={COLORS.soft}
-          stopOpacity={0.6}
+          stopColor={COLORS.bluePale}
+          stopOpacity={0.58}
         />
-
         <Stop
-          offset="50%"
-          stopColor={COLORS.light}
-          stopOpacity={0.95}
+          offset="52%"
+          stopColor={COLORS.white}
+          stopOpacity={0.96}
         />
-
         <Stop
-          offset="68%"
-          stopColor={COLORS.primary}
-          stopOpacity={0.86}
+          offset="72%"
+          stopColor={COLORS.blueBright}
+          stopOpacity={0.58}
         />
-
         <Stop
           offset="100%"
-          stopColor={COLORS.strong}
-          stopOpacity={0.08}
+          stopColor={COLORS.white}
+          stopOpacity={0}
         />
       </LinearGradient>
     </Defs>
   );
 }
-
-/* -------------------------------------------------------------------------- */
-/*                             Animated Ribbon                                */
-/* -------------------------------------------------------------------------- */
 
 const AnimatedRibbon = memo(function AnimatedRibbon({
   ribbon,
@@ -409,47 +304,33 @@ const AnimatedRibbon = memo(function AnimatedRibbon({
       Animated.sequence([
         Animated.timing(progress, {
           toValue: 1,
-
           duration: halfDuration,
-
           easing: Easing.inOut(Easing.sin),
-
           useNativeDriver: true,
         }),
-
         Animated.timing(progress, {
           toValue: 0,
-
           duration: halfDuration,
-
           easing: Easing.inOut(Easing.sin),
-
           useNativeDriver: true,
         }),
       ]),
-
-      {
-        iterations: -1,
-      },
+      { iterations: -1 },
     );
 
     delayRef.current = setTimeout(() => {
       animationRef.current = animation;
-
       animation.start();
     }, ribbon.delay);
 
     return () => {
       if (delayRef.current) {
         clearTimeout(delayRef.current);
-
         delayRef.current = null;
       }
 
       animationRef.current?.stop();
-
       animationRef.current = null;
-
       progress.stopAnimation();
     };
   }, [
@@ -461,7 +342,6 @@ const AnimatedRibbon = memo(function AnimatedRibbon({
 
   const rotate = progress.interpolate({
     inputRange: [0, 1],
-
     outputRange:
       ribbon.rotationDirection === 1
         ? ["-2deg", "3deg"]
@@ -470,29 +350,25 @@ const AnimatedRibbon = memo(function AnimatedRibbon({
 
   const scale = progress.interpolate({
     inputRange: [0, 1],
-
     outputRange: [1, ribbon.scalePeak],
   });
 
   const translateX = progress.interpolate({
     inputRange: [0, 1],
-
     outputRange: [0, ribbon.translateXPeak],
   });
 
   const translateY = progress.interpolate({
     inputRange: [0, 1],
-
     outputRange: [0, ribbon.translateYPeak],
   });
 
   const opacity = progress.interpolate({
     inputRange: [0, 0.5, 1],
-
     outputRange: [
-      ribbon.opacity * 0.88,
+      ribbon.opacity * 0.9,
       ribbon.opacity,
-      ribbon.opacity * 0.92,
+      ribbon.opacity * 0.94,
     ],
   });
 
@@ -501,26 +377,13 @@ const AnimatedRibbon = memo(function AnimatedRibbon({
       pointerEvents="none"
       style={[
         StyleSheet.absoluteFill,
-
         {
           opacity,
-
           transform: [
-            {
-              translateX,
-            },
-
-            {
-              translateY,
-            },
-
-            {
-              scale,
-            },
-
-            {
-              rotate,
-            },
+            { translateX },
+            { translateY },
+            { scale },
+            { rotate },
           ],
         },
       ]}
@@ -545,16 +408,12 @@ const AnimatedRibbon = memo(function AnimatedRibbon({
   );
 });
 
-/* -------------------------------------------------------------------------- */
-/*                                  Orb Glow                                  */
-/* -------------------------------------------------------------------------- */
-
 export default function OrbGlow({
   size = 220,
   animated = true,
   style,
-
-  accessibilityLabel = "BuildSigma intelligence orb",
+  accessibilityLabel = "Kepler AI",
+  decorative = false,
 }: Props) {
   const breathing = useRef(
     new Animated.Value(0),
@@ -563,13 +422,8 @@ export default function OrbGlow({
   const breathingLoop =
     useRef<Animated.CompositeAnimation | null>(null);
 
-  /* ------------------------------------------------------------------------ */
-  /*                            Breathing Animation                           */
-  /* ------------------------------------------------------------------------ */
-
   useEffect(() => {
     breathingLoop.current?.stop();
-
     breathing.stopAnimation();
 
     if (!animated) {
@@ -583,117 +437,90 @@ export default function OrbGlow({
       Animated.sequence([
         Animated.timing(breathing, {
           toValue: 1,
-
-          duration: 3200,
-
+          duration: 3600,
           easing: Easing.inOut(Easing.sin),
-
           useNativeDriver: true,
         }),
-
         Animated.timing(breathing, {
           toValue: 0,
-
-          duration: 3200,
-
+          duration: 3600,
           easing: Easing.inOut(Easing.sin),
-
           useNativeDriver: true,
         }),
       ]),
-
-      {
-        iterations: -1,
-      },
+      { iterations: -1 },
     );
 
     breathingLoop.current = animation;
-
     animation.start();
 
     return () => {
       breathingLoop.current?.stop();
-
       breathingLoop.current = null;
-
       breathing.stopAnimation();
     };
   }, [animated, breathing]);
 
-  /* ------------------------------------------------------------------------ */
-  /*                             Animated Values                              */
-  /* ------------------------------------------------------------------------ */
-
-  const glowScale = breathing.interpolate({
+  const auraScale = breathing.interpolate({
     inputRange: [0, 1],
-
-    outputRange: [0.97, 1.05],
+    outputRange: [0.98, 1.045],
   });
 
-  const glowOpacity = breathing.interpolate({
+  const auraOpacity = breathing.interpolate({
     inputRange: [0, 1],
-
-    outputRange: [0.5, 0.86],
+    outputRange: [0.58, 0.78],
   });
 
   const orbScale = breathing.interpolate({
     inputRange: [0, 1],
-
-    outputRange: [1, 1.02],
+    outputRange: [1, 1.018],
   });
 
   return (
     <View
+      pointerEvents="none"
       style={[
         styles.wrapper,
-
         {
           width: size,
           height: size,
         },
-
         style,
       ]}
-      accessible
-      accessibilityRole="image"
-      accessibilityLabel={accessibilityLabel}
+      accessible={!decorative}
+      accessibilityRole={decorative ? undefined : "image"}
+      accessibilityLabel={
+        decorative ? undefined : accessibilityLabel
+      }
     >
-      {/* ------------------------------------------------------------------ */}
-      {/* Ambient orange glow                                                */}
-      {/* ------------------------------------------------------------------ */}
-
       <Animated.View
         pointerEvents="none"
         style={[
-          styles.outerGlow,
-
+          styles.blueAura,
           {
-            opacity: glowOpacity,
-
-            transform: [
-              {
-                scale: glowScale,
-              },
-            ],
+            opacity: auraOpacity,
+            transform: [{ scale: auraScale }],
           },
         ]}
       />
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Main orb                                                           */}
-      {/* ------------------------------------------------------------------ */}
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.redAura,
+          {
+            opacity: auraOpacity,
+            transform: [{ scale: auraScale }],
+          },
+        ]}
+      />
 
       <Animated.View
         pointerEvents="none"
         style={[
           StyleSheet.absoluteFill,
-
           {
-            transform: [
-              {
-                scale: orbScale,
-              },
-            ],
+            transform: [{ scale: orbScale }],
           },
         ]}
       >
@@ -703,98 +530,143 @@ export default function OrbGlow({
           viewBox={`0 0 ${VIEWBOX_SIZE} ${VIEWBOX_SIZE}`}
         >
           <Defs>
-            {/* ---------------------------------------------------------- */}
-            {/* Center glow                                                */}
-            {/* ---------------------------------------------------------- */}
-
             <RadialGradient
-              id="ambientGlow"
-              cx="50%"
-              cy="50%"
-              rx="50%"
-              ry="50%"
-              fx="50%"
-              fy="50%"
+              id="sphereCore"
+              cx="34%"
+              cy="27%"
+              rx="72%"
+              ry="72%"
+              fx="30%"
+              fy="23%"
             >
               <Stop
                 offset="0%"
-                stopColor={COLORS.primary}
-                stopOpacity={0.2}
+                stopColor={COLORS.blueBright}
+                stopOpacity={0.92}
               />
-
               <Stop
-                offset="35%"
-                stopColor={COLORS.primary}
-                stopOpacity={0.14}
+                offset="12%"
+                stopColor={COLORS.blue}
+                stopOpacity={0.92}
               />
-
               <Stop
-                offset="65%"
-                stopColor={COLORS.bright}
-                stopOpacity={0.07}
+                offset="34%"
+                stopColor={COLORS.navyBright}
+                stopOpacity={1}
               />
-
+              <Stop
+                offset="67%"
+                stopColor={COLORS.navy}
+                stopOpacity={1}
+              />
               <Stop
                 offset="100%"
-                stopColor={COLORS.primary}
+                stopColor={COLORS.navyDeep}
+                stopOpacity={1}
+              />
+            </RadialGradient>
+
+            <RadialGradient
+              id="sphereLight"
+              cx="29%"
+              cy="20%"
+              rx="45%"
+              ry="45%"
+            >
+              <Stop
+                offset="0%"
+                stopColor={COLORS.white}
+                stopOpacity={0.75}
+              />
+              <Stop
+                offset="22%"
+                stopColor={COLORS.bluePale}
+                stopOpacity={0.38}
+              />
+              <Stop
+                offset="100%"
+                stopColor={COLORS.blue}
                 stopOpacity={0}
               />
             </RadialGradient>
 
-            {/* ---------------------------------------------------------- */}
-            {/* Orb perimeter                                              */}
-            {/* ---------------------------------------------------------- */}
-
-            <LinearGradient
-              id="orbEdge"
-              x1="0%"
-              y1="0%"
-              x2="100%"
-              y2="100%"
+            <RadialGradient
+              id="ambientBlue"
+              cx="50%"
+              cy="50%"
+              rx="50%"
+              ry="50%"
             >
               <Stop
                 offset="0%"
-                stopColor={COLORS.deep}
-                stopOpacity={0.9}
+                stopColor={COLORS.blue}
+                stopOpacity={0.22}
               />
-
               <Stop
-                offset="25%"
-                stopColor={COLORS.strong}
-                stopOpacity={0.94}
+                offset="55%"
+                stopColor={COLORS.blue}
+                stopOpacity={0.08}
               />
-
-              <Stop
-                offset="50%"
-                stopColor={COLORS.primary}
-                stopOpacity={1}
-              />
-
-              <Stop
-                offset="75%"
-                stopColor={COLORS.light}
-                stopOpacity={0.92}
-              />
-
               <Stop
                 offset="100%"
-                stopColor={COLORS.primary}
-                stopOpacity={0.96}
+                stopColor={COLORS.blue}
+                stopOpacity={0}
+              />
+            </RadialGradient>
+
+            <LinearGradient
+              id="sphereEdge"
+              x1="0%"
+              y1="15%"
+              x2="100%"
+              y2="85%"
+            >
+              <Stop
+                offset="0%"
+                stopColor={COLORS.blueBright}
+                stopOpacity={0.9}
+              />
+              <Stop
+                offset="34%"
+                stopColor={COLORS.navy}
+                stopOpacity={0.98}
+              />
+              <Stop
+                offset="68%"
+                stopColor={COLORS.red}
+                stopOpacity={0.56}
+              />
+              <Stop
+                offset="100%"
+                stopColor={COLORS.blue}
+                stopOpacity={0.8}
               />
             </LinearGradient>
           </Defs>
 
-          {/* Soft center illumination */}
+          <Ellipse
+            cx={CENTER}
+            cy={CENTER}
+            rx={AURA_RADIUS}
+            ry={AURA_RADIUS}
+            fill="url(#ambientBlue)"
+          />
 
           <Ellipse
             cx={CENTER}
             cy={CENTER}
-            rx={AMBIENT_RADIUS}
-            ry={AMBIENT_RADIUS}
-            fill="url(#ambientGlow)"
+            rx={ORB_RADIUS}
+            ry={ORB_RADIUS}
+            fill="url(#sphereCore)"
           />
 
-          {/* Stronger perimeter */}
+          <Ellipse
+            cx={CENTER - 20}
+            cy={CENTER - 32}
+            rx={ORB_RADIUS * 0.76}
+            ry={ORB_RADIUS * 0.62}
+            fill="url(#sphereLight)"
+          />
 
           <Ellipse
             cx={CENTER}
@@ -802,16 +674,12 @@ export default function OrbGlow({
             rx={ORB_RADIUS}
             ry={ORB_RADIUS}
             fill="none"
-            stroke="url(#orbEdge)"
-            strokeWidth={4}
-            opacity={0.92}
+            stroke="url(#sphereEdge)"
+            strokeWidth={5}
+            opacity={0.94}
           />
         </Svg>
       </Animated.View>
-
-      {/* ------------------------------------------------------------------ */}
-      {/* Independent ribbons                                                */}
-      {/* ------------------------------------------------------------------ */}
 
       {RIBBONS.map((ribbon) => (
         <AnimatedRibbon
@@ -820,10 +688,6 @@ export default function OrbGlow({
           animated={animated}
         />
       ))}
-
-      {/* ------------------------------------------------------------------ */}
-      {/* Foreground highlight                                               */}
-      {/* ------------------------------------------------------------------ */}
 
       <Svg
         pointerEvents="none"
@@ -842,31 +706,27 @@ export default function OrbGlow({
           >
             <Stop
               offset="0%"
-              stopColor={COLORS.primary}
+              stopColor={COLORS.white}
               stopOpacity={0}
             />
-
             <Stop
               offset="25%"
-              stopColor={COLORS.primary}
+              stopColor={COLORS.bluePale}
               stopOpacity={0.38}
             />
-
             <Stop
               offset="52%"
-              stopColor={COLORS.soft}
-              stopOpacity={1}
+              stopColor={COLORS.white}
+              stopOpacity={0.94}
             />
-
             <Stop
               offset="72%"
-              stopColor={COLORS.primary}
-              stopOpacity={0.74}
+              stopColor={COLORS.blueBright}
+              stopOpacity={0.5}
             />
-
             <Stop
               offset="100%"
-              stopColor={COLORS.deep}
+              stopColor={COLORS.white}
               stopOpacity={0}
             />
           </LinearGradient>
@@ -874,63 +734,61 @@ export default function OrbGlow({
 
         <Path
           d="
-            M92 260
-            C142 235 205 245 253 218
-            C299 192 313 150 324 118
+            M98 259
+            C144 236 202 245 250 220
+            C291 198 310 160 322 126
           "
           fill="none"
           stroke="url(#frontHighlight)"
-          strokeWidth={5}
+          strokeWidth={4}
           strokeLinecap="round"
-          opacity={1}
+          opacity={0.92}
         />
       </Svg>
     </View>
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/*                                   Styles                                   */
-/* -------------------------------------------------------------------------- */
-
 const styles = StyleSheet.create({
   wrapper: {
     position: "relative",
-
     alignItems: "center",
-
     justifyContent: "center",
-
     overflow: "visible",
-
     backgroundColor: "transparent",
   },
 
-  outerGlow: {
+  blueAura: {
     position: "absolute",
-
     width: "72%",
-
     height: "72%",
-
     borderRadius: 9999,
-
-    /**
-     * Same #FF641A orange with transparency.
-     */
-    backgroundColor: "rgba(255, 100, 26, 0.12)",
-
-    shadowColor: "#FF641A",
-
+    backgroundColor: "rgba(30, 143, 224, 0.13)",
+    shadowColor: "#1E8FE0",
     shadowOffset: {
       width: 0,
       height: 0,
     },
+    shadowOpacity: 0.38,
+    shadowRadius: 22,
+    elevation: 4,
+  },
 
-    shadowOpacity: 0.42,
-
-    shadowRadius: 38,
-
-    elevation: 5,
+  redAura: {
+    position: "absolute",
+    width: "54%",
+    height: "54%",
+    right: "8%",
+    top: "9%",
+    borderRadius: 9999,
+    backgroundColor: "rgba(227, 24, 55, 0.06)",
+    shadowColor: "#E31837",
+    shadowOffset: {
+      width: 0,
+      height: 0,
+    },
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    elevation: 2,
   },
 });

@@ -45,10 +45,21 @@ type CaptureProjectProps = NativeStackScreenProps<
   'CaptureProject'
 >;
 
-type Props = CaptureTabProps | CaptureProjectProps;
+type CaptureWorkspaceProps = NativeStackScreenProps<
+  RootStackParamList,
+  'CaptureWorkspace'
+>;
+
+type Props = CaptureTabProps | CaptureProjectProps | CaptureWorkspaceProps;
 
 function isCaptureProjectProps(props: Props): props is CaptureProjectProps {
   return props.route.name === 'CaptureProject';
+}
+
+function isCaptureStackProps(
+  props: Props,
+): props is CaptureProjectProps | CaptureWorkspaceProps {
+  return props.route.name === 'CaptureProject' || props.route.name === 'CaptureWorkspace';
 }
 
 export default function CaptureScreen(props: Props) {
@@ -164,7 +175,7 @@ export default function CaptureScreen(props: Props) {
   };
 
   const goBack = () => {
-    if (isCaptureProjectProps(props)) {
+    if (isCaptureStackProps(props)) {
       props.navigation.goBack();
     }
   };
@@ -213,7 +224,7 @@ export default function CaptureScreen(props: Props) {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        {isCaptureProjectProps(props) && (
+        {isCaptureStackProps(props) && (
           <View style={styles.topBar}>
             <Pressable
               style={styles.backButton}

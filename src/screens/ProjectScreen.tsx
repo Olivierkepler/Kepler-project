@@ -45,6 +45,7 @@ import type {
 } from "../types/projectMember";
 
 import type {
+  ProjectWorkspaceTab,
   RootStackParamList,
 } from "../navigation/types";
 
@@ -126,12 +127,7 @@ type Props =
 /*                               Helper Types                                 */
 /* -------------------------------------------------------------------------- */
 
-type ProjectTab =
-  | "plan"
-  | "todo"
-  | "team"
-  | "project"
-  | "workProgress";
+type ProjectTab = ProjectWorkspaceTab;
 
 /* -------------------------------------------------------------------------- */
 /*                                  Helpers                                   */
@@ -366,7 +362,7 @@ export default function ProjectScreen({
     activeTab,
     setActiveTab,
   ] = useState<ProjectTab>(
-    "plan",
+    route.params.initialTab ?? "plan",
   );
 
   const [

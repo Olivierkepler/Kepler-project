@@ -8,6 +8,7 @@ import {
   Easing,
   Platform,
   StyleSheet,
+  Text,
   View,
 } from "react-native";
 
@@ -23,11 +24,12 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 
-import CaptureScreen from "../screens/CaptureScreen";
 import DeltasScreen from "../screens/DeltasScreen";
 import HomeScreen from "../screens/HomeScreen";
+import KeplerAIScreen from "../screens/KeplerAIScreen";
 import ProfileScreen from "../screens/ProfileScreen";
 import ProjectsScreen from "../screens/ProjectsScreen";
+import OrbGlow from "../components/visuals/OrbGlow";
 
 import {
   colors,
@@ -51,9 +53,6 @@ const Tab =
 
 const KEPLER_NAVY =
   "#012169";
-
-const KEPLER_RED =
-  "#E31837";
 
 const ICON_MUTED =
   "#7A8494";
@@ -87,8 +86,6 @@ type GlassTabIconProps = {
   size:
     number;
 
-  prominent?:
-    boolean;
 };
 
 function GlassTabIcon({
@@ -97,7 +94,6 @@ function GlassTabIcon({
   focused,
   color,
   size,
-  prominent = false,
 }: GlassTabIconProps) {
   const activeProgress =
     useRef(
@@ -151,29 +147,6 @@ function GlassTabIcon({
     focused
       ? focusedName ?? name
       : name;
-
-  /* ------------------------------------------------------------------------ */
-  /* Capture                                                                  */
-  /* ------------------------------------------------------------------------ */
-
-  if (prominent) {
-    return (
-      <View
-        style={[
-          styles.captureIconContainer,
-
-          focused &&
-            styles.captureIconContainerFocused,
-        ]}
-      >
-        <Ionicons
-          name={iconName}
-          color="#FFFFFF"
-          size={26}
-        />
-      </View>
-    );
-  }
 
   /* ------------------------------------------------------------------------ */
   /* Standard Tab                                                             */
@@ -314,6 +287,24 @@ function GlassTabIcon({
           size={size}
         />
       </Animated.View>
+    </View>
+  );
+}
+
+function KeplerAiTabIcon() {
+  return (
+    <View
+      style={styles.captureIconContainer}
+      pointerEvents="none"
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      <OrbGlow
+        size={72}
+        animated={true}
+        style={styles.captureOrb}
+        accessibilityLabel=""
+      />
     </View>
   );
 }
@@ -568,29 +559,19 @@ export default function MainTabNavigator() {
 
       <Tab.Screen
         name="Capture"
-        component={
-          CaptureScreen
-        }
+        component={KeplerAIScreen}
         options={{
           tabBarLabel:
-            "Capture",
+            () => (
+              <Text style={styles.keplerAiLabel}>
+                Kepler AI
+              </Text>
+            ),
 
-          tabBarIcon: ({
-            focused,
-          }) => (
-            <GlassTabIcon
-              name="add"
-              focusedName="add"
-              focused={
-                focused
-              }
-              color={
-                KEPLER_RED
-              }
-              size={26}
-              prominent
-            />
-          ),
+          tabBarAccessibilityLabel:
+            "Kepler AI Capture",
+
+          tabBarIcon: KeplerAiTabIcon,
         }}
       />
 
@@ -872,83 +853,37 @@ const styles =
     /* ---------------------------------------------------------------------- */
 
     captureIconContainer: {
-      width:
-        46,
+      width: 46,
 
-      height:
-        46,
+      height: 46,
 
-      marginTop:
-        -10,
+      marginTop: -10,
 
-      marginBottom:
-        10,
-
-      borderRadius:
-        23,
+      marginBottom: 10,
 
       alignItems:
         "center",
 
       justifyContent:
         "center",
-
-      backgroundColor:
-        KEPLER_RED,
-
-      borderWidth:
-        4,
-
-      borderColor:
-        "rgba(255,255,255,0.98)",
-
-      shadowColor:
-        KEPLER_RED,
-
-      shadowOffset: {
-        width:
-          0,
-
-        height:
-          5,
-      },
-
-      shadowOpacity:
-        0.20,
-
-      shadowRadius:
-        10,
-
-      elevation:
-        7,
     },
 
-    captureIconContainerFocused: {
-      transform: [
-        {
-          scale:
-            1.045,
-        },
-      ],
+    captureOrb: {
+      position: "absolute",
+      width: 72,
+      height: 72,
+      top: -13,
+      left: -13,
+    },
 
-      shadowColor:
-        KEPLER_RED,
-
-      shadowOffset: {
-        width:
-          0,
-
-        height:
-          6,
-      },
-
-      shadowOpacity:
-        0.28,
-
-      shadowRadius:
-        13,
-
-      elevation:
-        9,
+    keplerAiLabel: {
+      ...typography.metadata,
+      color: KEPLER_NAVY,
+      fontSize: 9,
+      lineHeight: 11,
+      fontWeight: "600",
+      letterSpacing: 0.2,
+      marginTop: -1,
+      textAlign: "center",
     },
   });
