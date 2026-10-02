@@ -6,6 +6,7 @@ import type { KeplerProjectContext } from "../services/kepler/keplerProjectConte
 import type { ProjectAccessContext } from "../services/collaboration/projectAccessScope.js";
 import { createKeplerConversationService, KeplerConversationError, validateKeplerModelResponse } from "../services/kepler/keplerConversationService.js";
 import type { KeplerPage } from "../repositories/keplerConversationsRepository.js";
+import type { KeplerAgentRequest } from "../services/kepler/keplerAgentClient.js";
 
 const allowed: KeplerReference[] = [{ kind: "project", canonicalId: "p1", label: "Boston" }, { kind: "plan_item", canonicalId: "plan-1", label: "North wall" }];
 const context: KeplerProjectContext = { project: { id: "p1", name: "Boston", location: "Boston", status: "active" }, datasets: ["project"], planItems: [], workPackages: [], measurements: [], deltas: [], evidence: [], activity: [], allowedReferences: allowed };
@@ -30,6 +31,7 @@ async function main() {
   let assistant: KeplerMessage | undefined;
   let generationClaims = new Set<string>();
   let calls = 0;
+  let generatedRequest: KeplerAgentRequest | undefined;
   const service = createKeplerConversationService({
     assertProjectAccess: async (projectId, uid) => { if (projectId !== "p1" || uid !== "owner") throw new ProjectAccessError("Project not found", 404); return access; },
     createConversation: async () => conversation,
@@ -44,7 +46,7 @@ async function main() {
     },
     listMessages: async () => ({ items: [...messages.values(), ...(assistant ? [assistant] : [])].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)), nextCursor: null }),
     buildContext: async () => context,
-    generate: async () => { calls++; return { message: "Project facts are available.", references: [{ kind: "project", canonicalId: "p1" }, { kind: "project", canonicalId: "other-project" }], suggestedActions: [] }; },
+    generate: async (input) => { calls++; generatedRequest = input; return { message: "Project facts are available.", references: [{ kind: "project", canonicalId: "p1" }, { kind: "project", canonicalId: "other-project" }], suggestedActions: [] }; },
     claim: async (user) => assistant ? { outcome: "completed", message: assistant } : generationClaims.has(user.id) ? { outcome: "in_progress" } : (generationClaims.add(user.id), { outcome: "acquired", leaseToken: "lease-1" }),
     release: async (id) => { generationClaims.delete(id); },
     persistAssistant: async ({ userMessage, content, references, suggestedActions, createdAt }) => assistant ??= { id: "a1", conversationId: userMessage.conversationId, projectId: userMessage.projectId, role: "assistant", content, references, suggestedActions, createdAt },
@@ -53,6 +55,9 @@ async function main() {
   const first = await service.postUserMessage({ projectId: "p1", conversationId: "c1", uid: "owner", content: "What is recorded?", clientMessageId: "send-1" });
   assert.equal(first.generationStatus, "completed");
   assert.equal(first.assistantMessage?.references?.length, 1, "foreign model reference is dropped");
+  assert.ok(generatedRequest, "backend builds the agent request");
+  assert.deepEqual(generatedRequest.allowedReferences, allowed, "authorized reference catalog is a top-level contract field");
+  assert.equal(Object.hasOwn(generatedRequest.projectContext, "allowedReferences"), false, "project context contains no duplicate reference catalog");
   assert.equal(calls, 1);
   const retry = await service.postUserMessage({ projectId: "p1", conversationId: "c1", uid: "owner", content: "What is recorded?", clientMessageId: "send-1" });
   assert.equal(retry.assistantMessage?.id, first.assistantMessage?.id);

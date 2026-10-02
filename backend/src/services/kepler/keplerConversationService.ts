@@ -16,7 +16,7 @@ import {
 import { assertProjectAccessContext } from "../collaboration/projectAccessScope.js";
 import type { ProjectAccessContext } from "../collaboration/projectAccessScope.js";
 import { buildKeplerProjectContext, type KeplerProjectContext } from "./keplerProjectContext.js";
-import { createKeplerAgentCaller, type KeplerAgentCaller } from "./keplerAgentClient.js";
+import { buildKeplerAgentRequest, createKeplerAgentCaller, type KeplerAgentCaller, type KeplerAgentRequest } from "./keplerAgentClient.js";
 import { loadKeplerAgentServiceUrl } from "../../config/agentEnv.js";
 
 export class KeplerConversationError extends Error {
@@ -34,7 +34,7 @@ type Dependencies = {
   createUserMessage(input: { conversationId: string; projectId: string; userUid: string; clientMessageId: string; content: string; createdAt: string }): Promise<{ message: KeplerMessage; created: boolean }>;
   listMessages(input: { conversationId: string; projectId: string; limit: number; cursor?: string | null }): Promise<KeplerPage<KeplerMessage>>;
   buildContext(input: { access: ProjectAccessContext; question: string }): Promise<KeplerProjectContext>;
-  generate(input: { question: string; conversationHistory: Array<{ role: "user" | "assistant"; content: string }>; projectContext: Record<string, unknown>; allowedReferences: KeplerReference[] }): Promise<unknown>;
+  generate(input: KeplerAgentRequest): Promise<unknown>;
   claim(userMessage: KeplerMessage): Promise<{ outcome: "acquired"; leaseToken: string } | { outcome: "in_progress" } | { outcome: "completed"; message: KeplerMessage }>;
   release(userMessageId: string, leaseToken: string): Promise<void>;
   persistAssistant(input: { userMessage: KeplerMessage; userUid: string; leaseToken: string; content: string; references?: KeplerReference[]; suggestedActions?: KeplerSuggestedAction[]; createdAt: string }): Promise<KeplerMessage>;
@@ -136,13 +136,13 @@ export function createKeplerConversationService(overrides: Partial<Dependencies>
           .filter((item) => item.id !== result.message.id)
           .reverse()
           .map((item) => ({ role: item.role, content: item.content.slice(-1200) })) as Array<{ role: "user" | "assistant"; content: string }>;
-        const modelResult = await deps.generate({
+        const agentRequest = buildKeplerAgentRequest({
           question: result.message.content,
           conversationHistory,
-          projectContext: JSON.parse(JSON.stringify(context)) as Record<string, unknown>,
-          allowedReferences: context.allowedReferences,
+          projectContext: context,
         });
-        const validated = validateKeplerModelResponse(modelResult, context.allowedReferences);
+        const modelResult = await deps.generate(agentRequest);
+        const validated = validateKeplerModelResponse(modelResult, agentRequest.allowedReferences);
         const assistantMessage = await deps.persistAssistant({
           userMessage: result.message,
           userUid: input.uid,

@@ -1,11 +1,27 @@
 import { GoogleAuth } from "google-auth-library";
+import type { KeplerProjectContext } from "./keplerProjectContext.js";
 
 export type KeplerAgentRequest = {
   question: string;
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>;
-  projectContext: Record<string, unknown>;
-  allowedReferences: Array<{ kind: string; canonicalId: string; label: string }>;
+  projectContext: Omit<KeplerProjectContext, "allowedReferences">;
+  allowedReferences: KeplerProjectContext["allowedReferences"];
 };
+
+/** Keep the authorization catalog separate from factual project context. */
+export function buildKeplerAgentRequest(input: {
+  question: string;
+  conversationHistory: KeplerAgentRequest["conversationHistory"];
+  projectContext: KeplerProjectContext;
+}): KeplerAgentRequest {
+  const { allowedReferences, ...projectContext } = input.projectContext;
+  return {
+    question: input.question,
+    conversationHistory: input.conversationHistory,
+    projectContext: JSON.parse(JSON.stringify(projectContext)) as Omit<KeplerProjectContext, "allowedReferences">,
+    allowedReferences,
+  };
+}
 
 export type KeplerAgentResponse = {
   message: string;
