@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Keyboard,
@@ -22,11 +22,20 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../auth/AuthProvider";
 import OrbGlow from "../components/visuals/OrbGlow";
 import type { MainTabParamList, ProjectWorkspaceTab, RootStackParamList } from "../navigation/types";
-import { getMyDiscoveredProjects } from "../services/api/projects";
 import { getProjects } from "../store/projects";
-import type { DiscoveredProject } from "../types/discoveredProject";
 import type { Project } from "../types/project";
 import { colors, typography } from "../theme/colors";
+import { useKeplerProjectContext } from "../hooks/useKeplerProjectContext";
+import {
+  buildAttentionAnswer,
+  buildLargestVarianceAnswer,
+  buildProgressAnswer,
+  buildRecentActivityAnswer,
+  KEPLER_PROMPTS,
+  type KeplerDeterministicResponse,
+  type KeplerPromptKind,
+} from "../utils/domain/keplerProjectAnswers";
+import { getKeplerSelectedProject, setKeplerSelectedProject } from "../utils/domain/keplerProjectSelection";
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<MainTabParamList, "Capture">,
@@ -34,27 +43,18 @@ type Props = CompositeScreenProps<
 >;
 
 type StarterAction = {
-  id: string;
-  title: string;
+  kind: KeplerPromptKind;
+  label: string;
   icon: React.ComponentProps<typeof Ionicons>["name"];
-  destination?: ProjectWorkspaceTab;
 };
 
-type ProjectChoice =
-  | { id: string; name: string; location: string; source: "local" }
-  | {
-      id: string;
-      name: string;
-      location: string;
-      source: "shared";
-      membershipRole: DiscoveredProject["membership"]["role"];
-    };
+type ProjectChoice = Pick<Project, "id" | "name" | "location">;
 
 const STARTER_ACTIONS: readonly StarterAction[] = [
-  { id: "attention", title: "What needs my attention?", icon: "checkbox-outline", destination: "todo" },
-  { id: "progress", title: "Review project progress", icon: "bar-chart-outline", destination: "workProgress" },
-  { id: "variance", title: "Explain the largest variance", icon: "git-compare-outline" },
-  { id: "activity", title: "Summarize recent activity", icon: "time-outline", destination: "project" },
+  { kind: "attention", label: KEPLER_PROMPTS[0].label, icon: "checkbox-outline" },
+  { kind: "progress", label: KEPLER_PROMPTS[1].label, icon: "bar-chart-outline" },
+  { kind: "variance", label: KEPLER_PROMPTS[2].label, icon: "git-compare-outline" },
+  { kind: "activity", label: KEPLER_PROMPTS[3].label, icon: "time-outline" },
 ];
 
 function getGreeting(displayName: string | null | undefined): string {
@@ -74,12 +74,24 @@ export default function KeplerAIScreen({ navigation }: Props) {
   const [draft, setDraft] = useState("");
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [selectionVisible, setSelectionVisible] = useState(false);
-  const [selectedAction, setSelectedAction] = useState<StarterAction | null>(null);
   const [projects, setProjects] = useState<ProjectChoice[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [projectLoadError, setProjectLoadError] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<ProjectChoice | null>(() => {
+    const selected = getKeplerSelectedProject(user?.uid);
+    return selected ? { id: selected.id, name: selected.name, location: selected.location } : null;
+  });
+  const [answer, setAnswer] = useState<KeplerDeterministicResponse | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
+  const projectContext = useKeplerProjectContext(user?.uid, selectedProject?.id);
 
   const greeting = useMemo(() => getGreeting(user?.displayName), [user?.displayName]);
+
+  React.useEffect(() => {
+    const selected = getKeplerSelectedProject(user?.uid);
+    setSelectedProject(selected ? { id: selected.id, name: selected.name, location: selected.location } : null);
+    setAnswer(null);
+  }, [user?.uid]);
 
   React.useEffect(() => {
     const showSubscription = Keyboard.addListener("keyboardDidShow", () => setKeyboardVisible(true));
@@ -90,9 +102,7 @@ export default function KeplerAIScreen({ navigation }: Props) {
     };
   }, []);
 
-  const openProjectSelection = useCallback((action: StarterAction) => {
-    if (!action.destination) return;
-    setSelectedAction(action);
+  const openProjectSelection = useCallback(() => {
     setProjects([]);
     setProjectLoadError(false);
     setSelectionVisible(true);
@@ -104,59 +114,43 @@ export default function KeplerAIScreen({ navigation }: Props) {
       return;
     }
 
-    void Promise.allSettled([
-      getProjects(user.uid),
-      getMyDiscoveredProjects(),
-    ]).then(([localResult, discoveredResult]) => {
-      const localProjects = localResult.status === "fulfilled" ? localResult.value : [];
-      const discovered = discoveredResult.status === "fulfilled" ? discoveredResult.value : [];
-      const localProjectIds = new Set(localProjects.map((project) => project.id));
-      const choices: ProjectChoice[] = [
-        ...localProjects.map((project) => ({
-          id: project.id,
-          name: project.name,
-          location: project.location,
-          source: "local" as const,
-        })),
-        ...discovered
-          .filter((project) => !localProjectIds.has(project.localProjectId))
-          .map((project) => ({
-            id: project.id,
-            name: project.name,
-            location: project.location,
-            source: "shared" as const,
-            membershipRole: project.membership.role,
-          })),
-      ];
-      setProjects(choices);
-      setProjectLoadError(
-        choices.length === 0 && (localResult.status === "rejected" || discoveredResult.status === "rejected"),
-      );
-    }).finally(() => setLoadingProjects(false));
+    void getProjects(user.uid)
+      .then((localProjects) => setProjects(localProjects.map(({ id, name, location }) => ({ id, name, location }))))
+      .catch(() => setProjectLoadError(true))
+      .finally(() => setLoadingProjects(false));
   }, [user?.uid]);
 
   const selectProject = (project: ProjectChoice) => {
-    const destination = selectedAction?.destination;
     setSelectionVisible(false);
-    if (!destination) return;
-
-    if (project.source === "shared") {
-      navigation.navigate("Project", {
-        projectId: project.id,
-        source: "shared",
-        membershipRole: project.membershipRole,
-        initialTab: destination,
-      });
-      return;
-    }
-
-    navigation.navigate("Project", {
-      projectId: project.id,
-      initialTab: destination,
-    });
+    if (user?.uid) setKeplerSelectedProject({ ...project, ownerUid: user.uid });
+    setSelectedProject(project);
+    setAnswer(null);
   };
 
   const openCaptureWorkspace = () => navigation.navigate("CaptureWorkspace");
+
+  const submitStarter = (action: StarterAction) => {
+    const context = projectContext.context;
+    if (!context || projectContext.loading || projectContext.error || !selectedProject) return;
+    const nextAnswer = action.kind === "attention"
+      ? buildAttentionAnswer(context.project.id, context.todos)
+      : action.kind === "progress"
+        ? buildProgressAnswer(context.project.id, context.progressAvailable ? context.progress : null)
+        : action.kind === "variance"
+          ? buildLargestVarianceAnswer(context.project.id, context.variances, context.varianceLabels, context.varianceAvailable)
+          : buildRecentActivityAnswer(context.project.id, context.activity);
+    setAnswer(nextAnswer);
+  };
+
+  const openAnswerDestination = (destination: KeplerDeterministicResponse["destination"]) => {
+    if (!selectedProject) return;
+    const initialTab: ProjectWorkspaceTab = destination === "todo"
+      ? "todo"
+      : destination === "project"
+        ? "project"
+        : "workProgress";
+    navigation.navigate("Project", { projectId: selectedProject.id, initialTab });
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
@@ -179,52 +173,112 @@ export default function KeplerAIScreen({ navigation }: Props) {
         </View>
 
         <ScrollView
+          ref={scrollRef}
           style={styles.scroll}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          onContentSizeChange={() => {
+            if (answer) scrollRef.current?.scrollToEnd({ animated: true });
+          }}
         >
+          <Pressable
+            style={styles.projectSelector}
+            onPress={openProjectSelection}
+            accessibilityRole="button"
+            accessibilityLabel={selectedProject ? `Change project context, currently ${selectedProject.name}` : "Select project context"}
+          >
+            <View style={styles.projectSelectorCopy}>
+              <Text style={styles.projectEyebrow}>PROJECT CONTEXT</Text>
+              <Text style={styles.projectSelectorName} numberOfLines={1}>
+                {selectedProject?.name ?? "Select a project"}
+              </Text>
+              {selectedProject?.location ? <Text style={styles.selectorProjectLocation}>{selectedProject.location}</Text> : null}
+            </View>
+            <Ionicons name="chevron-down" size={18} color={KEPLER_NAVY} />
+          </Pressable>
+
           <View style={styles.hero}>
             <OrbGlow size={104} animated decorative accessibilityLabel="" />
             <Text style={styles.greeting}>{greeting}</Text>
-            <Text style={styles.supportingCopy}>How can I help with your projects?</Text>
+            <Text style={styles.supportingCopy}>
+              {selectedProject ? `Ask about ${selectedProject.name}.` : "How can I help with your projects?"}
+            </Text>
           </View>
+
+          {selectedProject && projectContext.loading ? (
+            <View style={styles.contextStatus} accessibilityLiveRegion="polite">
+              <ActivityIndicator size="small" color={KEPLER_NAVY} />
+              <Text style={styles.contextStatusText}>Loading project context…</Text>
+            </View>
+          ) : null}
+          {selectedProject && projectContext.error ? (
+            <View style={styles.errorPanel}>
+              <Text style={styles.errorText}>Unable to load project context.</Text>
+              <Pressable onPress={projectContext.retry} accessibilityRole="button" accessibilityLabel="Retry loading project context">
+                <Text style={styles.retryText}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : null}
 
           <View style={styles.promptSection}>
             <Text style={styles.sectionTitle}>Explore your project</Text>
             {STARTER_ACTIONS.map((action) => {
-              const unavailable = !action.destination;
+              const disabled = !selectedProject || projectContext.loading || projectContext.error;
               return (
                 <Pressable
-                  key={action.id}
+                  key={action.kind}
                   style={({ pressed }) => [
                     styles.promptCard,
-                    pressed && !unavailable && styles.promptCardPressed,
-                    unavailable && styles.promptCardUnavailable,
+                    pressed && !disabled && styles.promptCardPressed,
+                    disabled && styles.promptCardUnavailable,
                   ]}
-                  disabled={unavailable}
-                  onPress={() => openProjectSelection(action)}
+                  disabled={disabled}
+                  onPress={() => submitStarter(action)}
                   accessibilityRole="button"
-                  accessibilityLabel={unavailable ? `${action.title}, unavailable yet` : action.title}
-                  accessibilityState={{ disabled: unavailable }}
+                  accessibilityLabel={action.label}
+                  accessibilityState={{ disabled }}
                 >
                   <Ionicons
                     name={action.icon}
                     size={19}
-                    color={unavailable ? colors.text.muted : KEPLER_NAVY}
+                    color={disabled ? colors.text.muted : KEPLER_NAVY}
                   />
-                  <Text style={[styles.promptText, unavailable && styles.unavailableText]}>
-                    {action.title}
+                  <Text style={[styles.promptText, disabled && styles.unavailableText]}>
+                    {action.label}
                   </Text>
-                  {unavailable ? (
-                    <Text style={styles.unavailableLabel}>Coming later</Text>
-                  ) : (
-                    <Ionicons name="chevron-forward" size={17} color="#98A2B3" />
-                  )}
+                  <Ionicons name="chevron-forward" size={17} color="#98A2B3" />
                 </Pressable>
               );
             })}
           </View>
+
+          {answer && selectedProject ? (
+            <View style={styles.answerCard}>
+              <View style={styles.answerIdentity}>
+                <View style={styles.answerDot}><Ionicons name="sparkles" size={13} color="#FFFFFF" /></View>
+                <Text style={styles.answerIdentityText}>Kepler AI · Project facts</Text>
+              </View>
+              <Text style={styles.answerPrompt}>{answer.prompt}</Text>
+              <Text style={styles.answerTitle}>{answer.title}</Text>
+              <Text style={styles.answerSummary}>{answer.summary}</Text>
+              {answer.bullets.map((bullet, index) => (
+                <View key={`${answer.id}:${index}`} style={styles.answerBulletRow}>
+                  <View style={styles.answerBullet} />
+                  <Text style={styles.answerBulletText}>{bullet}</Text>
+                </View>
+              ))}
+              <Pressable
+                style={styles.answerCta}
+                onPress={() => openAnswerDestination(answer.destination)}
+                accessibilityRole="button"
+                accessibilityLabel={`${answer.ctaLabel} for ${selectedProject.name}`}
+              >
+                <Text style={styles.answerCtaText}>{answer.ctaLabel}</Text>
+                <Ionicons name="arrow-forward" size={15} color={KEPLER_NAVY} />
+              </Pressable>
+            </View>
+          ) : null}
         </ScrollView>
 
         <View
@@ -292,16 +346,14 @@ export default function KeplerAIScreen({ navigation }: Props) {
           />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Choose a project</Text>
-            <Text style={styles.modalSubtitle}>
-              {selectedAction?.title ?? "Open a project"}
-            </Text>
+            <Text style={styles.modalSubtitle}>Owner projects available on this device</Text>
             {loadingProjects ? (
               <ActivityIndicator color={KEPLER_NAVY} style={styles.loader} />
             ) : projects.length ? (
               <ScrollView style={styles.projectList}>
                 {projects.map((project) => (
                   <Pressable
-                    key={`${project.source}:${project.id}`}
+                    key={project.id}
                     style={styles.projectRow}
                     onPress={() => selectProject(project)}
                     accessibilityRole="button"
@@ -328,7 +380,7 @@ export default function KeplerAIScreen({ navigation }: Props) {
               </Text>
             )}
             <Text style={styles.modalFootnote}>
-              Kepler AI chat is not active yet. Choose a project to open its existing workspace.
+              Shared projects aren’t available for Kepler project facts yet.
             </Text>
             <Pressable
               style={styles.modalCancel}
@@ -364,6 +416,23 @@ const styles = StyleSheet.create({
   headerTitle: { ...typography.bodyMedium, color: colors.brand.navy },
   scroll: { flex: 1 },
   content: { paddingHorizontal: 20, paddingBottom: 20 },
+  projectSelector: {
+    minHeight: 58,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderRadius: 13,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#E3E8EF",
+    backgroundColor: "#FFFFFF",
+  },
+  projectSelectorCopy: { flex: 1, paddingRight: 12 },
+  projectEyebrow: { ...typography.metadata, color: colors.text.muted, letterSpacing: 0.6 },
+  projectSelectorName: { ...typography.bodyMedium, color: KEPLER_NAVY, marginTop: 1 },
+  selectorProjectLocation: { ...typography.metadata, color: colors.text.secondary, marginTop: 1 },
   hero: { alignItems: "center", paddingTop: 22, paddingBottom: 24 },
   greeting: { ...typography.title, color: colors.brand.navy, marginTop: 5, textAlign: "center" },
   supportingCopy: { ...typography.body, color: colors.text.secondary, marginTop: 5, textAlign: "center" },
@@ -390,7 +459,23 @@ const styles = StyleSheet.create({
   promptCardUnavailable: { backgroundColor: "#F8F9FB", borderColor: "#ECEFF3" },
   promptText: { ...typography.bodyMedium, color: colors.brand.navy, flex: 1 },
   unavailableText: { color: colors.text.muted },
-  unavailableLabel: { ...typography.metadata, color: colors.text.muted },
+  contextStatus: { minHeight: 38, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9 },
+  contextStatusText: { ...typography.caption, color: colors.text.secondary },
+  errorPanel: { paddingVertical: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12 },
+  errorText: { ...typography.caption, color: colors.text.secondary },
+  retryText: { ...typography.bodyMedium, color: KEPLER_NAVY },
+  answerCard: { marginTop: 6, marginBottom: 14, padding: 16, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: "#E1E6EE", backgroundColor: "#FFFFFF" },
+  answerIdentity: { flexDirection: "row", alignItems: "center", gap: 7 },
+  answerDot: { width: 23, height: 23, borderRadius: 12, backgroundColor: KEPLER_NAVY, alignItems: "center", justifyContent: "center" },
+  answerIdentityText: { ...typography.metadata, color: KEPLER_NAVY },
+  answerPrompt: { ...typography.metadata, color: colors.text.muted, marginTop: 13 },
+  answerTitle: { ...typography.bodyMedium, color: colors.text.primary, marginTop: 5 },
+  answerSummary: { ...typography.body, color: colors.text.primary, marginTop: 4 },
+  answerBulletRow: { flexDirection: "row", alignItems: "flex-start", gap: 9, marginTop: 8, paddingLeft: 2 },
+  answerBullet: { width: 5, height: 5, borderRadius: 3, backgroundColor: KEPLER_NAVY, marginTop: 7 },
+  answerBulletText: { ...typography.body, color: colors.text.secondary, flex: 1 },
+  answerCta: { minHeight: 39, alignSelf: "flex-start", marginTop: 13, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 11, backgroundColor: "#F0F4FA" },
+  answerCtaText: { ...typography.caption, color: KEPLER_NAVY },
   composerArea: { paddingHorizontal: 14, paddingTop: 10, paddingBottom: 8, backgroundColor: "#FAFBFD" },
   composer: {
     minHeight: 54,
