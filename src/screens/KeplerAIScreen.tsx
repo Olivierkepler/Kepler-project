@@ -18,6 +18,7 @@ import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useNetInfo } from "@react-native-community/netinfo";
 
 import { useAuth } from "../auth/AuthProvider";
 import OrbGlow from "../components/visuals/OrbGlow";
@@ -36,6 +37,11 @@ import {
   type KeplerPromptKind,
 } from "../utils/domain/keplerProjectAnswers";
 import { getKeplerSelectedProject, setKeplerSelectedProject } from "../utils/domain/keplerProjectSelection";
+import { useKeplerConversation } from "../hooks/useKeplerConversation";
+import KeplerConversationTranscript from "../components/kepler-ai/KeplerConversationTranscript";
+import type { KeplerReference, KeplerSuggestedAction } from "../services/api/keplerAssistant";
+import { getLocalProjectIdForRemote } from "../store/projectCloudMappings";
+import { getPlanItemCloudMappingsForProject } from "../store/planItemCloudMappings";
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<MainTabParamList, "Capture">,
@@ -83,7 +89,13 @@ export default function KeplerAIScreen({ navigation }: Props) {
   });
   const [answer, setAnswer] = useState<KeplerDeterministicResponse | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+  const netInfo = useNetInfo();
+  const conversation = useKeplerConversation(user?.uid, selectedProject?.id);
   const projectContext = useKeplerProjectContext(user?.uid, selectedProject?.id);
+  const offline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
+  const hasTranscript = conversation.messages.length > 0;
+  const composerBlocked = conversation.sending || conversation.status === "processing" || Boolean(conversation.attempt) || offline;
+  const draftCanSend = Boolean(selectedProject && conversation.availability === "available" && draft.trim() && !composerBlocked);
 
   const greeting = useMemo(() => getGreeting(user?.displayName), [user?.displayName]);
 
@@ -91,6 +103,7 @@ export default function KeplerAIScreen({ navigation }: Props) {
     const selected = getKeplerSelectedProject(user?.uid);
     setSelectedProject(selected ? { id: selected.id, name: selected.name, location: selected.location } : null);
     setAnswer(null);
+    setDraft("");
   }, [user?.uid]);
 
   React.useEffect(() => {
@@ -125,9 +138,72 @@ export default function KeplerAIScreen({ navigation }: Props) {
     if (user?.uid) setKeplerSelectedProject({ ...project, ownerUid: user.uid });
     setSelectedProject(project);
     setAnswer(null);
+    setDraft("");
+    conversation.reset();
   };
 
   const openCaptureWorkspace = () => navigation.navigate("CaptureWorkspace");
+
+  const sendDraft = async () => {
+    if (!draftCanSend) return;
+    const content = draft;
+    setAnswer(null);
+    const accepted = await conversation.send(content);
+    if (accepted) {
+      setDraft((current) => current === content ? "" : current);
+      Keyboard.dismiss();
+    }
+  };
+
+  const retryMessage = async () => {
+    const retryContent = conversation.attempt?.content;
+    const accepted = await conversation.retry();
+    if (accepted && retryContent) setDraft((current) => current === retryContent ? "" : current);
+  };
+
+  const canOpenReference = (reference: KeplerReference) => {
+    if (!selectedProject || !conversation.remoteProjectId) return false;
+    if (reference.kind === "project") return reference.canonicalId === conversation.remoteProjectId;
+    return reference.kind === "plan_item" || reference.kind === "activity";
+  };
+
+  const openReference = async (reference: KeplerReference) => {
+    if (!user?.uid || !selectedProject || !conversation.remoteProjectId) return;
+    const localProjectId = await getLocalProjectIdForRemote(user.uid, conversation.remoteProjectId);
+    if (!localProjectId || localProjectId !== selectedProject.id) return;
+    if (reference.kind === "project" && reference.canonicalId === conversation.remoteProjectId) {
+      navigation.navigate("Project", { projectId: localProjectId, initialTab: "plan" });
+      return;
+    }
+    if (reference.kind === "plan_item") {
+      const mappings = await getPlanItemCloudMappingsForProject(user.uid, localProjectId);
+      const matching = mappings.find((mapping) => mapping.remoteProjectId === conversation.remoteProjectId && mapping.remotePlanItemId === reference.canonicalId);
+      if (matching) navigation.navigate("PlanItemDetail", { projectId: localProjectId, planItemId: matching.localPlanItemId, source: "local" });
+      return;
+    }
+    if (reference.kind === "activity") navigation.navigate("ProjectActivity", { projectId: localProjectId, source: "local" });
+  };
+
+  const openSuggestedAction = (action: KeplerSuggestedAction) => {
+    if (canOpenReference(action.reference)) void openReference(action.reference);
+  };
+  const canOpenAction = (action: KeplerSuggestedAction) => action.kind === "navigate" && canOpenReference(action.reference);
+
+  const projectSelector = (
+    <Pressable
+      style={styles.projectSelector}
+      onPress={openProjectSelection}
+      accessibilityRole="button"
+      accessibilityLabel={selectedProject ? `Change project context, currently ${selectedProject.name}` : "Select project context"}
+    >
+      <View style={styles.projectSelectorCopy}>
+        <Text style={styles.projectEyebrow}>PROJECT CONTEXT</Text>
+        <Text style={styles.projectSelectorName} numberOfLines={1}>{selectedProject?.name ?? "Select a project"}</Text>
+        {selectedProject?.location ? <Text style={styles.selectorProjectLocation}>{selectedProject.location}</Text> : null}
+      </View>
+      <Ionicons name="chevron-down" size={18} color={KEPLER_NAVY} />
+    </Pressable>
+  );
 
   const submitStarter = (action: StarterAction) => {
     const context = projectContext.context;
@@ -172,6 +248,26 @@ export default function KeplerAIScreen({ navigation }: Props) {
           </Pressable>
         </View>
 
+        {hasTranscript ? (
+          <View style={styles.transcriptArea}>
+            <View style={styles.transcriptProjectHeader}>
+              {projectSelector}
+              {conversation.status === "access_denied" ? (
+                <Text style={styles.mappingNotice}>You no longer have access to this project.</Text>
+              ) : null}
+            </View>
+            <KeplerConversationTranscript
+              messages={conversation.messages}
+              status={conversation.status}
+              errorMessage={conversation.errorMessage}
+              onRetry={() => { void retryMessage(); }}
+              canOpenReference={canOpenReference}
+              onOpenReference={(reference) => { void openReference(reference); }}
+              onOpenAction={openSuggestedAction}
+              canOpenAction={canOpenAction}
+            />
+          </View>
+        ) : (
         <ScrollView
           ref={scrollRef}
           style={styles.scroll}
@@ -182,21 +278,7 @@ export default function KeplerAIScreen({ navigation }: Props) {
             if (answer) scrollRef.current?.scrollToEnd({ animated: true });
           }}
         >
-          <Pressable
-            style={styles.projectSelector}
-            onPress={openProjectSelection}
-            accessibilityRole="button"
-            accessibilityLabel={selectedProject ? `Change project context, currently ${selectedProject.name}` : "Select project context"}
-          >
-            <View style={styles.projectSelectorCopy}>
-              <Text style={styles.projectEyebrow}>PROJECT CONTEXT</Text>
-              <Text style={styles.projectSelectorName} numberOfLines={1}>
-                {selectedProject?.name ?? "Select a project"}
-              </Text>
-              {selectedProject?.location ? <Text style={styles.selectorProjectLocation}>{selectedProject.location}</Text> : null}
-            </View>
-            <Ionicons name="chevron-down" size={18} color={KEPLER_NAVY} />
-          </Pressable>
+          {projectSelector}
 
           <View style={styles.hero}>
             <OrbGlow size={104} animated decorative accessibilityLabel="" />
@@ -219,6 +301,10 @@ export default function KeplerAIScreen({ navigation }: Props) {
                 <Text style={styles.retryText}>Retry</Text>
               </Pressable>
             </View>
+          ) : null}
+
+          {conversation.status === "access_denied" ? (
+            <View style={styles.errorPanel}><Text style={styles.errorText}>You no longer have access to this project.</Text></View>
           ) : null}
 
           <View style={styles.promptSection}>
@@ -280,6 +366,7 @@ export default function KeplerAIScreen({ navigation }: Props) {
             </View>
           ) : null}
         </ScrollView>
+        )}
 
         <View
           style={[
@@ -306,7 +393,8 @@ export default function KeplerAIScreen({ navigation }: Props) {
               multiline
               blurOnSubmit={false}
               returnKeyType="default"
-              accessibilityLabel="Draft a question for Kepler AI"
+              editable={!conversation.sending}
+              accessibilityLabel="Write a message to Kepler AI"
             />
             <Pressable
               style={styles.composerAction}
@@ -317,17 +405,47 @@ export default function KeplerAIScreen({ navigation }: Props) {
             >
               <Ionicons name="camera-outline" size={20} color={KEPLER_NAVY} />
             </Pressable>
-            <Pressable
-              style={[styles.composerAction, styles.disabledAction]}
-              disabled
-              accessibilityRole="button"
-              accessibilityLabel="Voice input unavailable"
-              accessibilityState={{ disabled: true }}
-            >
-              <Ionicons name="mic-outline" size={20} color={colors.text.muted} />
-            </Pressable>
+            {draftCanSend ? (
+              <Pressable
+                style={[styles.composerAction, styles.sendAction]}
+                onPress={() => { void sendDraft(); }}
+                accessibilityRole="button"
+                accessibilityLabel="Send message to Kepler AI"
+                hitSlop={6}
+              >
+                <Ionicons name="arrow-up" size={21} color="#FFFFFF" />
+              </Pressable>
+            ) : conversation.sending ? (
+              <View style={[styles.composerAction, styles.sendAction]} accessibilityLabel="Sending message">
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              </View>
+            ) : (
+              <Pressable
+                style={[styles.composerAction, styles.disabledAction]}
+                disabled
+                accessibilityRole="button"
+                accessibilityLabel="Voice input unavailable"
+                accessibilityState={{ disabled: true }}
+              >
+                <Ionicons name="mic-outline" size={20} color={colors.text.muted} />
+              </Pressable>
+            )}
           </View>
-          <Text style={styles.composerNote}>Draft only · Kepler AI chat is coming next</Text>
+          <Text style={styles.composerNote}>
+            {offline
+              ? "You're offline. Kepler chat needs a connection."
+              : conversation.availability === "loading"
+                ? "Checking project connection…"
+                : conversation.availability === "unavailable"
+                  ? selectedProject ? "Kepler AI chat isn't available for this project yet." : "Select a connected project to chat with Kepler AI."
+                  : conversation.status === "processing"
+                    ? "Kepler is thinking. Use Check response to safely retry this message."
+                    : conversation.attempt && conversation.status === "failed"
+                      ? "Your message is ready to retry."
+                      : conversation.status === "failed" && conversation.errorMessage
+                        ? conversation.errorMessage
+                      : "Messages are private to you and this project."}
+          </Text>
         </View>
       </KeyboardAvoidingView>
 
@@ -401,6 +519,9 @@ const KEPLER_NAVY = "#012169";
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  transcriptArea: { flex: 1 },
+  transcriptProjectHeader: { paddingHorizontal: 20, paddingBottom: 9 },
+  mappingNotice: { ...typography.metadata, color: colors.text.secondary, marginTop: 7, textAlign: "center" },
   safeArea: { flex: 1, backgroundColor: "#FAFBFD" },
   header: {
     height: 52,
@@ -495,6 +616,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   composerAction: { width: 36, height: 40, alignItems: "center", justifyContent: "center" },
+  sendAction: { width: 34, height: 34, borderRadius: 17, backgroundColor: KEPLER_NAVY },
   disabledAction: { opacity: 0.45 },
   input: { ...typography.body, flex: 1, maxHeight: 92, minHeight: 38, paddingVertical: 8, paddingHorizontal: 3, color: colors.text.primary },
   composerNote: { ...typography.metadata, color: colors.text.muted, textAlign: "center", marginTop: 5 },
